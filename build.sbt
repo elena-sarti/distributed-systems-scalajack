@@ -1,18 +1,37 @@
-ThisBuild / version := "1.0.0"
-
+ThisBuild / version      := "1.0.0"
 ThisBuild / scalaVersion := "3.3.5"
 
-assembly / assemblyOutputPath := file("./pps-scalajack.jar")
+lazy val commonTestDeps = Seq(
+  libraryDependencies ++= Seq(
+    "org.scalatest" %% "scalatest" % "3.2.18" % Test
+  )
+)
 
-lazy val root = (project in file("."))
+lazy val model = project
   .settings(
-    name := "pps-scalajack",
-    Compile / mainClass := Some("controller.GameController"),
-    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.5.4",
-    libraryDependencies += "com.github.sbt" % "junit-interface" % "0.13.3" % Test,
-    // add scala test
-    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.18" % Test,
-    libraryDependencies +="org.mockito" % "mockito-core" % "3.+" % Test,
-    // dependencies for using Prolog
+    name := "scalajack-model",
+    commonTestDeps,
     libraryDependencies += "it.unibo.alice.tuprolog" % "tuprolog" % "3.3.0"
   )
+
+lazy val protocol = project
+  .dependsOn(model)
+  .settings(name := "scalajack-protocol", commonTestDeps)
+
+lazy val server = project
+  .dependsOn(protocol)
+  .settings(name := "scalajack-server", commonTestDeps)
+
+lazy val client = project
+  .dependsOn(protocol)
+  .settings(
+    name := "scalajack-client",
+    commonTestDeps,
+    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.5.4",
+    Compile / mainClass := Some("controller.GameController"),
+    assembly / assemblyOutputPath := file("./scalajack-client.jar")
+  )
+
+lazy val root = (project in file("."))
+  .aggregate(model, protocol, server, client)
+  .settings(name := "scalajack", publish / skip := true)
