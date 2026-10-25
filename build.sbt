@@ -16,7 +16,12 @@ lazy val model = project
 
 lazy val protocol = project
   .dependsOn(model)
-  .settings(name := "scalajack-protocol", commonTestDeps)
+  .settings(
+    name := "scalajack-protocol",
+    commonTestDeps,
+    // upickle: JSON (de)serialization of the protocol messages, derived at compile time
+    libraryDependencies += "com.lihaoyi" %% "upickle" % "4.1.0"
+  )
 
 lazy val server = project
   .dependsOn(protocol)
