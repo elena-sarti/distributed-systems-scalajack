@@ -1,0 +1,6 @@
+.git
+.idea
+.bsp
+.metals
+**/target
+*.jar

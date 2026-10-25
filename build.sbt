@@ -20,7 +20,11 @@ lazy val protocol = project
 
 lazy val server = project
   .dependsOn(protocol)
-  .settings(name := "scalajack-server", commonTestDeps)
+  .settings(name := "scalajack-server",
+    commonTestDeps,
+    Compile / mainClass := Some("server.Main"),
+    assembly / assemblyJarName := "scalajack-server.jar"
+  )
 
 lazy val client = project
   .dependsOn(protocol)
