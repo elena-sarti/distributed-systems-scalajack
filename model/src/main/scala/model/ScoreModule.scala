@@ -1,5 +1,5 @@
 package model
-
+// Prova push
 import alice.tuprolog.{Int as _, *}
 import utils.Scala2P.{*, given}
 
