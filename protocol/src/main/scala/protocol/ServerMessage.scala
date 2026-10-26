@@ -64,6 +64,6 @@ enum ServerMessage derives ReadWriter:
 
   /** The last message received from this client was rejected.
    *
-   * @param reason a human readable explanation (e.g. "it is not your turn").
+   * @param reason a human-readable explanation (e.g. "it is not your turn").
    */
   case ErrorMessage(reason: String)

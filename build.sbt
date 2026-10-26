@@ -25,10 +25,21 @@ lazy val protocol = project
 
 lazy val server = project
   .dependsOn(protocol)
-  .settings(name := "scalajack-server",
+  .settings(
+    name := "scalajack-server",
     commonTestDeps,
+    libraryDependencies ++= Seq(
+      "org.java-websocket" % "Java-WebSocket" % "1.6.0",
+      "org.slf4j"          % "slf4j-simple"   % "2.0.13" // log backend, otherwise the library's logs are dropped
+    ),
     Compile / mainClass := Some("server.Main"),
-    assembly / assemblyJarName := "scalajack-server.jar"
+    assembly / assemblyJarName := "scalajack-server.jar",
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "services", _*) => MergeStrategy.concat // keeps the SLF4J provider registration
+      case PathList("META-INF", _*)             => MergeStrategy.discard
+      case "module-info.class"                  => MergeStrategy.discard
+      case _                                    => MergeStrategy.first
+    }
   )
 
 lazy val client = project
