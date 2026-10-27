@@ -23,7 +23,7 @@ final class TableEndpoint(port: Int, handler: SessionHandler):
   @volatile private var startupError: Option[Exception] = None
   private val server = Server()
 
-  /** Starts listening; returns when the endpoint is ready, throws if it cannot start (e.g. port in use). */
+  /** Starts listening; returns when the endpoint is ready, throws if it cannot start (ex. port in use). */
   def start(): Unit =
     server.start()
     val signalled = started.await(StartTimeoutSeconds, TimeUnit.SECONDS)
@@ -36,7 +36,7 @@ final class TableEndpoint(port: Int, handler: SessionHandler):
   def stop(): Unit = server.stop(StopTimeoutMillis)
 
   /** While the endpoint is stopping, the library interrupts its own thread just before calling
-   * onClose for the last connection. An interrupted thread makes blocking calls (e.g. queue.put)
+   * onClose for the last connection. An interrupted thread makes blocking calls (queue.put)
    * throw, which would silently lose the notification: the flag is cleared during the callback
    * and restored afterwards, so the library still shuts down as it expects.
    */

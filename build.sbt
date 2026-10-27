@@ -47,7 +47,11 @@ lazy val client = project
   .settings(
     name := "scalajack-client",
     commonTestDeps,
-    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.5.4",
+    libraryDependencies ++= Seq(
+      "org.typelevel"      %% "cats-effect"    % "3.5.4",
+      "org.java-websocket" %  "Java-WebSocket" % "1.6.0"  % Test, // fake table server for the network tests
+      "org.slf4j"          %  "slf4j-simple"   % "2.0.13" % Test
+    ),
     Compile / mainClass := Some("controller.GameController"),
     assembly / assemblyOutputPath := file("./scalajack-client.jar")
   )
