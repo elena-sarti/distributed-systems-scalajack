@@ -643,3 +643,8 @@ class GameTest extends AnyFunSuite with BeforeAndAfterEach:
     game.addBots()
     game.addBots()
     game.players.size shouldBe Game.MaxPlayersNum
+
+  test("addPlayer appends the new player at the end of the turn order"):
+    val newcomer = NormalPlayer("Carl", 100)
+    game.addPlayer(newcomer)
+    game.players shouldBe List(firstPlayer, secondPlayer, newcomer)

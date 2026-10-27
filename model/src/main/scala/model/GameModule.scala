@@ -20,6 +20,13 @@ object GameModule:
      */
     def players: List[Player]
 
+    /** Adds a player at the end of the turn order: a new seat taken at the table
+     * (in the networked game players arrive one at a time).
+     *
+     * @param player The player who sits down.
+     */
+    def addPlayer(player: Player): Unit
+
     /** Generates a list of BotPlayers and appends them to the current players list to have a number of participant equal
      * to the maximum possible number. */
     def addBots(): Unit
@@ -329,6 +336,9 @@ object GameModule:
       private var cutCardMessageShown: Boolean = false
 
       override def players: List[Player] = currentPlayers
+
+      override def addPlayer(player: Player): Unit =
+        currentPlayers = currentPlayers :+ player
 
       override def balances(players: List[Player]): List[(String, Double)] =
         players.map(p => (p.name, p.balance.totalValue))

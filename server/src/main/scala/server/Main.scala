@@ -8,9 +8,12 @@ object Main:
         sys.exit(1)
       case Right(config) =>
         val health = HealthServer(config.role, config.port)
-        val endpoint = Option.when(config.role == NodeRole.Table)(TableEndpoint(config.wsPort, NotReadyHandler))
+        // a table node runs one table: its logic is driven by a single writer thread
+        val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(TableHandler()))
+        val endpoint = table.map(TableEndpoint(config.wsPort, _))
         sys.addShutdownHook:
-          endpoint.foreach(_.stop())
+          endpoint.foreach(_.stop()) // first stop the network, so no new events arrive...
+          table.foreach(_.stop())    // ...then let the table finish the events already queued
           health.stop()
         health.start()
         endpoint.foreach: e =>
