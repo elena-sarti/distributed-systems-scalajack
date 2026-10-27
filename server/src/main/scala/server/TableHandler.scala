@@ -39,7 +39,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
         case JoinTable(_)     => seat.send(ErrorMessage(AlreadySeated))
         case LeaveTable       => leave(seat)
         case PlaceBet(amount) => placeBet(seat, amount)
-        case _                => seat.send(ErrorMessage(NotYourTurn)) // the players' turns come next
+        case action           => play(seat, action)
 
   /** For now a disconnection frees the seat like a voluntary leave (mid-hand handling comes with C5). */
   def onDisconnected(connection: Connection): Unit =
@@ -59,7 +59,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
         phase match
           case Phase.Idle    => startHand()
           case Phase.Betting => requestBet(seat)
-          case Phase.Playing => () // a hand is being played: the new player waits for the next one
+          case Phase.Turn(_) | Phase.DealerTurn => () // a hand is being played: the new player waits for the next one
 
   /** Why a player with this name cannot sit down, if there is a reason. */
   private def rejectionReason(name: String): Option[String] =
@@ -69,12 +69,19 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     else None
 
   private def leave(seat: Seat): Unit =
+    val next = nextToPlay(after = seat.player) // computed while the player is still in the turn order
     game.removeLeavingPlayers(List(seat.player))
     game.currentBets = game.currentBets.filterNot(_.player == seat.player) // a bet left on the table is lost
     seats = seats - seat.connection.id
-    broadcastTable()
     if seats.isEmpty then abandonHand()
-    else if phase == Phase.Betting then dealIfEveryoneHasBet() // the one who left may be the last we waited for
+    else phase match
+      case Phase.Betting =>
+        broadcastTable()
+        dealIfEveryoneHasBet() // the one who left may be the last we waited for
+      case Phase.Turn(player) if player == seat.player =>
+        nextTurn(next) // it was their turn: it passes on, the table never waits for who left
+      case _ =>
+        broadcastTable()
 
   // ---- Hand: betting and dealing ----------------------------------------------------------------
 
@@ -101,11 +108,59 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   private def dealIfEveryoneHasBet(): Unit =
     if seats.values.forall(seat => hasBet(seat.player)) then deal()
 
-  /** Two cards to every player and to the dealer (the second one of the dealer face down). */
+  /** Two cards to every player and to the dealer (the second one of the dealer face down),
+   * then the players' turns begin. TableView masks the dealer's face-down card: it never leaves the node. */
   private def deal(): Unit =
     game.distributeCards()
-    phase = Phase.Playing
-    broadcastTable() // TableView masks the dealer's face-down card: it never leaves the node
+    game.handleBlackjacks(game.initialBlackjackPlayers()) // same as the local game: a blackjack does not play
+    nextTurn(game.players.find(needsToPlay))
+
+  // ---- Hand: the players' turns -----------------------------------------------------------------
+
+  /** Whether the player still has to play in this hand: has bet, and is not busted, standing or with a blackjack. */
+  private def needsToPlay(player: Player): Boolean =
+    hasBet(player) && player.state == PlayerState.Active
+
+  /** The next player in turn order, after the given one, who still has to play. */
+  private def nextToPlay(after: Player): Option[Player] =
+    game.players.dropWhile(_ != after).drop(1).find(needsToPlay)
+
+  private def nextTurn(next: Option[Player]): Unit = next match
+    case Some(player) => startTurn(player)
+    case None         => playersDone()
+
+  /** Tells everyone whose turn it is, and asks that player for an action. */
+  private def startTurn(player: Player): Unit =
+    phase = Phase.Turn(player)
+    broadcastTable()
+    // double down and split are offered from C4 on
+    seatOf(player).foreach(_.send(ActionRequest(player.name, canDoubleDown = false, canSplit = false)))
+
+  /** Only the player whose turn it is may act; every other action is refused. */
+  private def play(seat: Seat, action: ClientMessage): Unit = phase match
+    case Phase.Turn(player) if player == seat.player => action match
+      case Hit   => hit(player)
+      case Stand => stand(player)
+      case _     => seat.send(ErrorMessage(ActionNotAllowed)) // double down, split, insurance: C4
+    case _ => seat.send(ErrorMessage(NotYourTurn))
+
+  /** One more card. Same rules as the local game: bust ends the turn, 21 stands automatically. */
+  private def hit(player: Player): Unit =
+    game.drawCard(player)
+    if game.evaluatePlayerBust(player) then endTurn(player)
+    else if player.score.playableValue == WinningScore then stand(player)
+    else startTurn(player) // still their turn: they are asked again
+
+  private def stand(player: Player): Unit =
+    player.stand()
+    endTurn(player)
+
+  private def endTurn(player: Player): Unit = nextTurn(nextToPlay(after = player))
+
+  /** Every player has played: the dealer's turn (next step). */
+  private def playersDone(): Unit =
+    phase = Phase.DealerTurn
+    broadcastTable()
 
   /** Nobody is left at the table: the hand is dropped and the table waits for new players. */
   private def abandonHand(): Unit =
@@ -113,9 +168,14 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     game.handleHandEnd()
     phase = Phase.Idle
 
-  /** Sends the new state of the table to every seated client. */
+  private def seatOf(player: Player): Option[Seat] = seats.values.find(_.player == player)
+
+  /** Sends the new state of the table, including whose turn it is, to every seated client. */
   private def broadcastTable(): Unit =
-    val update = TableUpdate(TableView.of(game))
+    val currentTurn = phase match
+      case Phase.Turn(player) => Some(player.name)
+      case _                  => None
+    val update = TableUpdate(TableView.of(game, currentTurn))
     seats.values.foreach(_.send(update))
 
 object TableHandler:
@@ -131,12 +191,14 @@ object TableHandler:
   val NotBettingTime = "Bets are not accepted now"
   val AlreadyBet     = "You have already placed your bet for this hand"
   val InvalidBet     = s"The bet must be a positive multiple of ${Game.MinGameBet}, not greater than your balance"
+  val ActionNotAllowed = "This action is not allowed now"
 
   /** The phases of a hand: the table moves from one to the next when the expected messages arrive. */
   private enum Phase:
-    case Idle    // no hand: the next player who sits down starts one
-    case Betting // waiting for the bet of every seated player
-    case Playing // cards dealt, the hand is being played
+    case Idle                 // no hand: the next player who sits down starts one
+    case Betting              // waiting for the bet of every seated player
+    case Turn(player: Player) // cards dealt: waiting for the action of this player
+    case DealerTurn           // every player has played: the dealer plays
 
   /** A seated player and the connection of its client. */
   private final case class Seat(connection: Connection, player: Player):
