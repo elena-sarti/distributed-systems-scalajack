@@ -1,7 +1,7 @@
 package server
 
 import utils.TestExports.*
-import utils.ModelExports.{Deck, Game, PlayerState, StandardCard, Suit, Value}
+import utils.ModelExports.{CutCard, Deck, Game, PlayerState, StandardCard, Suit, Value}
 import protocol.{ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
@@ -39,8 +39,6 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private def seatedPlayers(connection: FakeConnection): List[String] =
     lastTable(connection).players.map(_.name)
-
-  // ---- Seats ------------------------------------------------------------------------------------
 
   test("a player who joins is accepted with the initial balance and sees the table"):
     val alice = join("Alice")
@@ -93,8 +91,6 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     table.onDisconnected(FakeConnection("stranger"))
     alice.inbox.size shouldBe messagesBefore
 
-  // ---- Betting ----------------------------------------------------------------------------------
-
   test("when the first player sits down a hand starts and the bet is requested"):
     val alice = join("Alice")
     alice.inbox.last shouldBe BetRequest(DefaultBalance, Game.MinGameBet)
@@ -131,8 +127,6 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     val alice = join("Alice")
     table.onMessage(alice, Hit)
     alice.inbox.last shouldBe ErrorMessage(NotYourTurn)
-
-  // ---- Dealing ----------------------------------------------------------------------------------
 
   private val two: StandardCard   = StandardCard(Suit.Hearts, Value.Two)
   private val three: StandardCard = StandardCard(Suit.Clubs, Value.Three)
@@ -177,8 +171,6 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     bob.inbox.last shouldBe BetRequest(DefaultBalance, Game.MinGameBet)
     lastTable(bob).dealer.visibleCards.isEmpty shouldBe true
 
-  // ---- Players' turns ---------------------------------------------------------------------------
-
   private def card(value: Value): StandardCard = StandardCard(Suit.Diamonds, value)
 
   /** A table with Alice already seated, her bet of 10 placed and the cards dealt from `cards`
@@ -189,7 +181,16 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onMessage(alice, PlaceBet(10))
     (dealt, alice)
 
-  private def aliceState(alice: FakeConnection): PlayerState = lastTable(alice).players.head.state
+  /** The table as it was when the hand ended: the last update before the results of the hand
+   * (afterwards the table is cleaned for the next hand). */
+  private def tableAtEndOfHand(connection: FakeConnection): TableView =
+    val beforeResults = connection.inbox.toList.takeWhile(!_.isInstanceOf[HandResults])
+    beforeResults.collect { case TableUpdate(view) => view }.last
+
+  private def handResults(connection: FakeConnection): List[(String, Double)] =
+    connection.inbox.collectFirst { case HandResults(balances) => balances }.get
+
+  private def aliceState(alice: FakeConnection): PlayerState = tableAtEndOfHand(alice).players.head.state
 
   test("after the deal the first player is asked to act and everyone sees whose turn it is"):
     val (_, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
@@ -203,28 +204,27 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = false, canSplit = false)
 
   test("stand ends the player's turn"):
-    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
     dealt.onMessage(alice, Stand)
     aliceState(alice) shouldBe PlayerState.Standing
-    lastTable(alice).currentTurn shouldBe None
+    tableAtEndOfHand(alice).currentTurn shouldBe None
 
   test("a player who busts ends the turn"):
     val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.King)
     dealt.onMessage(alice, Hit)
     aliceState(alice) shouldBe PlayerState.Busted
-    lastTable(alice).currentTurn shouldBe None
+    tableAtEndOfHand(alice).currentTurn shouldBe None
 
   test("a player who reaches 21 stands automatically"):
     val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Five)
     dealt.onMessage(alice, Hit)
     aliceState(alice) shouldBe PlayerState.Standing
-    lastTable(alice).currentTurn shouldBe None
+    tableAtEndOfHand(alice).currentTurn shouldBe None
 
   test("a player with an initial blackjack is paid at once and does not play"):
-    // the dealer shows a nine, so it cannot have a blackjack: 3:2 payout right away, as in the local game
-    val (_, alice) = aliceDealt(Value.Ace, Value.Nine, Value.King, Value.Seven)
+    val (_, alice) = aliceDealt(Value.Ace, Value.Nine, Value.King, Value.Seven, Value.Two)
     aliceState(alice) shouldBe PlayerState.Blackjack
-    lastTable(alice).players.head.balance shouldBe DefaultBalance - 10 + 25
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 25))
     alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
 
   test("double down and split are not available yet"):
@@ -247,6 +247,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onMessage(bob, Hit)
     bob.inbox.last shouldBe ErrorMessage(NotYourTurn)
     lastTable(alice).players.find(_.name == "Bob").get.cards.size shouldBe 2
+    lastTable(alice).currentTurn shouldBe Some("Alice") // nothing changed
 
   test("when a player ends the turn the next one is asked to act"):
     val (dealt, alice, bob) = aliceAndBobDealt()
@@ -258,3 +259,111 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     val (dealt, alice, bob) = aliceAndBobDealt()
     dealt.onMessage(alice, LeaveTable)
     bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = false, canSplit = false)
+
+  test("after the last player the dealer reveals the hidden card and draws up to 17, and everyone sees it"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand)
+    val dealer = tableAtEndOfHand(alice).dealer
+    dealer.hiddenCards shouldBe 0
+    dealer.visibleCards.map(_.value) shouldBe List(Value.Nine, Value.Seven, Value.Two) // 18
+
+  test("the dealer does not reveal the hidden card while a player is still playing"):
+    val (_, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    lastTable(alice).dealer.hiddenCards shouldBe 1
+
+  test("a player who beats the dealer is paid 1:1 and the results are sent to the table"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Queen, Value.Seven, Value.Two) // 20
+    dealt.onMessage(alice, Stand)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 20))
+
+  test("a player who loses against the dealer loses the bet"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two) // 16
+    dealt.onMessage(alice, Stand)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10))
+
+  test("on equal scores the bet is returned"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Eight, Value.Nine) // 18
+    dealt.onMessage(alice, Stand)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance))
+
+  test("when the dealer busts the players still in the game win"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.King)
+    dealt.onMessage(alice, Stand)
+    tableAtEndOfHand(alice).dealer.visibleCards.size shouldBe 3
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 20))
+
+  test("a busted player loses even if the dealer busts too"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.King, Value.Queen)
+    dealt.onMessage(alice, Hit) // 26
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10))
+
+  test("with more players every balance is settled against the same dealer's hand"):
+    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five,
+      Value.Five, Value.Four).map(card)*)
+    val alice = join("Alice", dealt)
+    val bob   = join("Bob", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(bob, PlaceBet(10))
+    dealt.onMessage(alice, Hit)
+    dealt.onMessage(bob, Stand)
+    val expected = List(("Alice", DefaultBalance - 10 + 20), ("Bob", DefaultBalance - 10))
+    handResults(alice) shouldBe expected
+    handResults(bob) shouldBe expected
+
+  test("when the hand is over the table is cleaned and everybody is asked for a new bet"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand)
+    alice.inbox.last shouldBe BetRequest(DefaultBalance - 10, Game.MinGameBet)
+    val view = lastTable(alice)
+    view.players.head.cards.isEmpty shouldBe true
+    view.players.head.state shouldBe PlayerState.Active
+    view.players.head.bet shouldBe None
+    view.dealer.visibleCards.isEmpty shouldBe true
+
+  test("a second hand can be played right after the first one"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two,
+      Value.Ten, Value.Nine, Value.Queen, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand)
+    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(alice, Stand) // 20 against 18
+    alice.inbox.collect { case HandResults(b) => b } shouldBe
+      List(List(("Alice", DefaultBalance - 10)), List(("Alice", DefaultBalance - 10 + 10)))
+
+  test("a player left without money to bet is told the game is over for them and leaves the table"):
+    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two).map(card)*)
+    val alice = join("Alice", dealt)
+    dealt.onMessage(alice, PlaceBet(100)) // the whole balance
+    dealt.onMessage(alice, Stand)
+    alice.inbox.last shouldBe GameOver(List(("Alice", 0.0)))
+    join("Alice", dealt).inbox.head shouldBe JoinAccepted("Alice", DefaultBalance) // the seat is free again
+
+  test("a broke player leaves while the others go on with a new hand"):
+    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five,
+      Value.Five, Value.Four).map(card)*)
+    val alice = join("Alice", dealt)
+    val bob   = join("Bob", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(bob, PlaceBet(100))
+    dealt.onMessage(alice, Hit)
+    dealt.onMessage(bob, Stand) // Bob loses everything
+    bob.inbox.last shouldBe GameOver(List(("Bob", 0.0)))
+    alice.inbox.last shouldBe BetRequest(DefaultBalance + 10, Game.MinGameBet)
+    lastTable(alice).players.map(_.name) shouldBe List("Alice")
+
+  test("a player who sits down during a hand plays from the next one"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    val bob = join("Bob", dealt) // the hand of Alice is in progress
+    bob.inbox.exists(_.isInstanceOf[BetRequest]) shouldBe false
+    dealt.onMessage(alice, Stand)
+    bob.inbox.last shouldBe BetRequest(DefaultBalance, Game.MinGameBet)
+    handResults(bob) shouldBe List(("Alice", DefaultBalance - 10), ("Bob", DefaultBalance))
+
+  test("when the cut card comes out the game is over for everybody and the table restarts"):
+    // the cut card appears among the dealer's cards, it is skipped, as in the local game
+    val dealt = TableHandler(newGame = () => Game(List.empty,
+      Deck.testDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven), CutCard, card(Value.Two))))
+    val alice = join("Alice", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(alice, Stand)
+    alice.inbox.last shouldBe GameOver(List(("Alice", DefaultBalance - 10)))
+    join("Alice", dealt).inbox.head shouldBe JoinAccepted("Alice", DefaultBalance) // a new game for new players

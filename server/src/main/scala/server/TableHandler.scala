@@ -20,7 +20,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
                          newGame: () => Game = () => Game(List.empty)) extends SessionHandler:
   import TableHandler.*
 
-  private val game = newGame()
+  private var game = newGame()
 
   /** The seated players, by connection id. */
   private var seats = Map.empty[String, Seat]
@@ -44,8 +44,6 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   /** For now a disconnection frees the seat like a voluntary leave (mid-hand handling comes with C5). */
   def onDisconnected(connection: Connection): Unit =
     seats.get(connection.id).foreach(leave)
-
-  // ---- Seats ------------------------------------------------------------------------------------
 
   private def join(connection: Connection, name: String): Unit =
     rejectionReason(name) match
@@ -83,8 +81,6 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
       case _ =>
         broadcastTable()
 
-  // ---- Hand: betting and dealing ----------------------------------------------------------------
-
   /** A new hand starts: every seated player is asked for a bet. */
   private def startHand(): Unit =
     phase = Phase.Betting
@@ -114,8 +110,6 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     game.distributeCards()
     game.handleBlackjacks(game.initialBlackjackPlayers()) // same as the local game: a blackjack does not play
     nextTurn(game.players.find(needsToPlay))
-
-  // ---- Hand: the players' turns -----------------------------------------------------------------
 
   /** Whether the player still has to play in this hand: has bet, and is not busted, standing or with a blackjack. */
   private def needsToPlay(player: Player): Boolean =
@@ -157,10 +151,49 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
 
   private def endTurn(player: Player): Unit = nextTurn(nextToPlay(after = player))
 
-  /** Every player has played: the dealer's turn (next step). */
+  /** Every player has played: the dealer plays (no choices, it follows the rules), the bets are settled
+   * and the hand ends. The whole sequence runs in one go inside the single writer, so no message of a
+   * client can slip in between the reveal of the dealer's card and the payout. */
   private def playersDone(): Unit =
     phase = Phase.DealerTurn
-    broadcastTable()
+    game.resolveInsurances() // same order as the local game; nobody has insurance until C4
+    game.computeDealerTurn() // reveals the face-down card, then draws up to 17
+    game.handlePayout()
+    broadcastTable()         // the dealer's hand is now fully visible, and so are the new balances
+    val results = HandResults(game.balances(game.players))
+    seats.values.foreach(_.send(results))
+    endHand()
+
+  /** Cleans the table as the local game does (split hands, players without money), then starts the next hand. */
+  private def endHand(): Unit =
+    game.removeSplitPlayers()
+    sendGameOverToBrokePlayers()
+    game.currentBets = List.empty
+    game.handleHandEnd() // every player Active again with an empty hand, empty dealer's hand
+    if seats.isEmpty then resetTable()
+    else if game.isOver then closeTable() // the cut card has come out: this deck is finished
+    else
+      broadcastTable()
+      startHand()
+
+  /** Players who cannot afford the minimum bet are told the game is over for them and leave the table. */
+  private def sendGameOverToBrokePlayers(): Unit =
+    val broke = game.brokePlayers()
+    broke.flatMap(seatOf).foreach: seat =>
+      seat.send(GameOver(game.balances(List(seat.player))))
+      seats = seats - seat.connection.id
+    game.removeBrokePlayers()
+
+  /** The deck is over: everybody gets the final balances and the table restarts with a fresh game. */
+  private def closeTable(): Unit =
+    seats.values.foreach(seat => seat.send(GameOver(game.balances(List(seat.player)))))
+    resetTable()
+
+  /** Nobody is seated: a new game (with a new deck) is created for the next players. */
+  private def resetTable(): Unit =
+    seats = Map.empty
+    game = newGame()
+    phase = Phase.Idle
 
   /** Nobody is left at the table: the hand is dropped and the table waits for new players. */
   private def abandonHand(): Unit =
@@ -198,7 +231,7 @@ object TableHandler:
     case Idle                 // no hand: the next player who sits down starts one
     case Betting              // waiting for the bet of every seated player
     case Turn(player: Player) // cards dealt: waiting for the action of this player
-    case DealerTurn           // every player has played: the dealer plays
+    case DealerTurn           // every player has played: the dealer plays and the bets are settled
 
   /** A seated player and the connection of its client. */
   private final case class Seat(connection: Connection, player: Player):
