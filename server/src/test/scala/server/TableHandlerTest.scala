@@ -267,6 +267,13 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealer.hiddenCards shouldBe 0
     dealer.visibleCards.map(_.value) shouldBe List(Value.Nine, Value.Seven, Value.Two) // 18
 
+  test("the face-down card is revealed to everyone before the dealer draws"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand)
+    val revealed = updates(alice).filter(view => view.dealer.hiddenCards == 0 && view.dealer.visibleCards.nonEmpty)
+    revealed.head.dealer.visibleCards.map(_.value) shouldBe List(Value.Nine, Value.Seven) // the reveal alone
+    revealed.head.players.head.balance shouldBe DefaultBalance - 10
+
   test("the dealer does not reveal the hidden card while a player is still playing"):
     val (_, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
     lastTable(alice).dealer.hiddenCards shouldBe 1

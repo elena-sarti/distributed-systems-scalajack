@@ -31,9 +31,12 @@ final class TestWsClient(uri: URI):
   def send(message: ClientMessage): Unit = sendRaw(MessageCodec.encode(message))
   def sendRaw(text: String): Unit        = socket.sendText(text, true).get(5, TimeUnit.SECONDS)
 
+  /** The next text frame exactly as it travelled on the network, not decoded. */
+  def receiveRaw(): String =
+    Option(inbox.poll(5, TimeUnit.SECONDS)).getOrElse(throw AssertionError("No message within 5 seconds"))
+
   def receive(): ServerMessage =
-    val json = Option(inbox.poll(5, TimeUnit.SECONDS)).getOrElse(throw AssertionError("No message within 5 seconds"))
-    MessageCodec.decodeServerMessage(json) match
+    MessageCodec.decodeServerMessage(receiveRaw()) match
       case Right(message) => message
       case Left(error)    => throw AssertionError(error)
 

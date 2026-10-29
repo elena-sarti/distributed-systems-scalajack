@@ -160,13 +160,20 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
    * client can slip in between the reveal of the dealer's card and the payout. */
   private def playersDone(): Unit =
     phase = Phase.DealerTurn
+    revealDealerCard()
     game.resolveInsurances() // same order as the local game; nobody has insurance until C4
-    game.computeDealerTurn() // reveals the face-down card, then draws up to 17
+    game.computeDealerTurn() // the card is already face up: the dealer draws up to 17
     game.handlePayout()
-    broadcastTable()         // the dealer's hand is now fully visible, and so are the new balances
+    broadcastTable()         // the dealer's final hand, and the new balances
     val results = HandResults(game.balances(game.players))
     seats.values.foreach(_.send(results))
     endHand()
+
+  /** The reveal: the face-down card is turned and, only from this moment on, it is part of the
+   * snapshots sent to the clients. Before this point it exists only in the memory of the table node. */
+  private def revealDealerCard(): Unit =
+    game.dealer.revealCards()
+    broadcastTable()
 
   /** Cleans the table as the local game does (split hands, players without money), then starts the next hand. */
   private def endHand(): Unit =
