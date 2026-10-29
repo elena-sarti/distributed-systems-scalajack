@@ -31,13 +31,19 @@ final case class DealerView(visibleCards: List[StandardCard], hiddenCards: Int) 
 
 /** A snapshot of the whole table, broadcast to every client after each change of state.
  *
+ * Snapshots are numbered: the table node gives every new snapshot the next version, so the
+ * same version always means the same state for every client, and the versions tell the clients
+ * the order of the states (a lower version than the last one received is an old state).
+ *
  * @param players     the players at the table, in turn order.
  * @param dealer      the dealer, with the face-down cards masked.
  * @param currentTurn the name of the hand whose turn it is, if a turn is in progress.
+ * @param version     the sequence number of this snapshot at its table node.
  */
 final case class TableView(players: List[PlayerView],
                            dealer: DealerView,
-                           currentTurn: Option[String]) derives ReadWriter
+                           currentTurn: Option[String],
+                           version: Long) derives ReadWriter
 
 object TableView:
 
@@ -45,11 +51,12 @@ object TableView:
    *
    * @param game        the game held by the table node.
    * @param currentTurn the name of the hand whose turn it is, if any.
+   * @param version     the sequence number given to the snapshot by the table node.
    * @return the snapshot that can be safely sent to every client.
    */
-  def of(game: Game, currentTurn: Option[String] = None): TableView =
+  def of(game: Game, currentTurn: Option[String] = None, version: Long = 0): TableView =
     val players = game.players.map: player =>
       val bet = game.currentBets.find(_.player == player).map(_.amount)
       PlayerView(player.name, player.cards, player.state, player.balance.totalValue, bet)
     val (faceUp, faceDown) = game.dealer.cards.partition(_.isFaceUp)
-    TableView(players, DealerView(faceUp, faceDown.size), currentTurn)
+    TableView(players, DealerView(faceUp, faceDown.size), currentTurn, version)

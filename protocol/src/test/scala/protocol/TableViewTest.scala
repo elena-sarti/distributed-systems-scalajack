@@ -47,3 +47,6 @@ class TableViewTest extends AnyFunSuite with BeforeAndAfterEach:
 
   test("the current turn is reported as given"):
     TableView.of(game, Some("Alice")).currentTurn shouldBe Some("Alice")
+
+  test("the version is reported as given"):
+    TableView.of(game, version = 7).version shouldBe 7

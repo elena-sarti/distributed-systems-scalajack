@@ -13,7 +13,8 @@ class ServerMessageTest extends AnyFunSuite:
       PlayerView("Bob", List.empty, PlayerState.Active, 100.5, None)
     ),
     dealer = DealerView(List(StandardCard(Suit.Spades, Value.Seven)), hiddenCards = 1),
-    currentTurn = Some("Bob")
+    currentTurn = Some("Bob"),
+    version = 42
   )
 
   /** One sample for each kind of server message. */
