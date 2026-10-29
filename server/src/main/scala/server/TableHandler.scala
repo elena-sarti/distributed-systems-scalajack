@@ -28,6 +28,10 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   /** Where the current hand is. */
   private var phase: Phase = Phase.Idle
 
+  /** Version of the last snapshot sent: it grows by one at every broadcast and is never reset,
+   * not even when the table restarts with a new game, so it orders all the states of this table. */
+  private var version = 0L
+
   def onConnected(connection: Connection): Unit = () // nothing to do until the client asks to join
 
   def onMessage(connection: Connection, message: ClientMessage): Unit =
@@ -203,12 +207,15 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
 
   private def seatOf(player: Player): Option[Seat] = seats.values.find(_.player == player)
 
-  /** Sends the new state of the table, including whose turn it is, to every seated client. */
+  /** Sends the new state of the table, including whose turn it is, to every seated client.
+   * Everybody gets the very same snapshot, with a new version: since every change goes through the
+   * single writer, all the clients see the same states in the same order. */
   private def broadcastTable(): Unit =
     val currentTurn = phase match
       case Phase.Turn(player) => Some(player.name)
       case _                  => None
-    val update = TableUpdate(TableView.of(game, currentTurn))
+    version += 1
+    val update = TableUpdate(TableView.of(game, currentTurn, version))
     seats.values.foreach(_.send(update))
 
 object TableHandler:

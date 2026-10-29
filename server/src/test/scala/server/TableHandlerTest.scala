@@ -367,3 +367,60 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onMessage(alice, Stand)
     alice.inbox.last shouldBe GameOver(List(("Alice", DefaultBalance - 10)))
     join("Alice", dealt).inbox.head shouldBe JoinAccepted("Alice", DefaultBalance) // a new game for new players
+
+  /** Every table snapshot received by the client, in order. */
+  private def updates(connection: FakeConnection): List[TableView] =
+    connection.inbox.toList.collect { case TableUpdate(view) => view }
+
+  /** The snapshots received from the given version on. */
+  private def updatesFrom(version: Long)(connection: FakeConnection): List[TableView] =
+    updates(connection).filter(_.version >= version)
+
+  /** Alice, Bob and Carol seated, all bet 10, cards dealt and the hand played to the end:
+   * Alice 10+6 stands, Bob has a blackjack (the dealer shows a nine: paid at once, he does not play),
+   * Carol 9+7 stands; the dealer 9+7 draws a two (18). */
+  private def threePlayersHand(): (TableHandler, FakeConnection, FakeConnection, FakeConnection) =
+    // deal order: Alice, Bob, Carol, dealer, Alice, Bob, Carol, dealer (face down), then the dealer's draw
+    val dealt = tableWithDeck(List(Value.Ten, Value.Ace, Value.Nine, Value.Nine,
+      Value.Six, Value.King, Value.Seven, Value.Seven, Value.Two).map(card)*)
+    val alice = join("Alice", dealt)
+    val bob   = join("Bob", dealt)
+    val carol = join("Carol", dealt)
+    List(alice, bob, carol).foreach(dealt.onMessage(_, PlaceBet(10)))
+    dealt.onMessage(alice, Stand)
+    dealt.onMessage(carol, Stand)
+    (dealt, alice, bob, carol)
+
+  test("every client receives the same snapshots of the table"):
+    val (_, alice, bob, carol) = threePlayersHand()
+    val fromCarolJoin = updates(carol).head.version // from here on all three are seated
+    val seenByAlice = updatesFrom(fromCarolJoin)(alice)
+    (seenByAlice.size > 5) shouldBe true
+    updatesFrom(fromCarolJoin)(bob) shouldBe seenByAlice
+    updatesFrom(fromCarolJoin)(carol) shouldBe seenByAlice
+
+  test("the snapshots are numbered one after the other"):
+    val (_, alice, _, _) = threePlayersHand()
+    val versions = updates(alice).map(_.version)
+    versions shouldBe (versions.head to versions.last).toList
+
+  test("the turns follow the seating order and skip who does not have to play"):
+    val (_, alice, bob, carol) = threePlayersHand()
+    val turns = updates(bob).map(_.currentTurn).filter(_.isDefined).distinct
+    turns shouldBe List(Some("Alice"), Some("Carol"))
+    alice.inbox.count(_.isInstanceOf[ActionRequest]) shouldBe 1
+    bob.inbox.count(_.isInstanceOf[ActionRequest]) shouldBe 0
+    carol.inbox.count(_.isInstanceOf[ActionRequest]) shouldBe 1
+
+  test("every client gets the results of all the players"):
+    val (_, alice, bob, carol) = threePlayersHand()
+    val expected = List(("Alice", DefaultBalance - 10), ("Bob", DefaultBalance - 10 + 25), ("Carol", DefaultBalance - 10))
+    List(alice, bob, carol).foreach(client => handResults(client) shouldBe expected)
+
+  test("a player who sits down during a hand immediately sees the current state of the table"):
+    val (dealt, alice, _) = aliceAndBobDealt()
+    val dave = join("Dave", dealt)
+    val seenByDave = updates(dave).head
+    seenByDave shouldBe lastTable(alice) // the same snapshot, with the same version
+    seenByDave.currentTurn shouldBe Some("Alice")
+    seenByDave.dealer.hiddenCards shouldBe 1
