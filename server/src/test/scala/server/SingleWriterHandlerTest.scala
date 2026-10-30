@@ -5,6 +5,7 @@ import protocol.{ClientMessage, ServerMessage}
 import server.TestSupport.next
 import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
+import scala.concurrent.duration.*
 
 class SingleWriterHandlerTest extends AnyFunSuite:
 
@@ -105,3 +106,33 @@ class SingleWriterHandlerTest extends AnyFunSuite:
     writer.stop()
     writer.onMessage(connection, ClientMessage.Hit) // must not throw
     probe.processed.poll(200, TimeUnit.MILLISECONDS) shouldBe null
+
+  test("the table is ticked periodically, on the same thread that processes the messages"):
+    val threads = LinkedBlockingQueue[String]()
+    val table = new SessionHandler:
+      def onConnected(connection: Connection): Unit = ()
+      def onDisconnected(connection: Connection): Unit = ()
+      def onMessage(connection: Connection, message: ClientMessage): Unit = ()
+      override def onTick(): Unit = threads.offer(Thread.currentThread().getName)
+    val writer = SingleWriterHandler(table, tickPeriod = 20.millis)
+    try
+      next(threads) shouldBe "table-writer"
+      next(threads) shouldBe "table-writer" // and again: it is periodic
+    finally writer.stop()
+
+  test("a tick never runs while a message is being processed"):
+    val inProgress = AtomicInteger(0)
+    val overlaps = AtomicInteger(0)
+    def busy(millis: Long): Unit =
+      if inProgress.incrementAndGet() > 1 then overlaps.incrementAndGet()
+      Thread.sleep(millis)
+      inProgress.decrementAndGet()
+    val table = new SessionHandler:
+      def onConnected(connection: Connection): Unit = ()
+      def onDisconnected(connection: Connection): Unit = ()
+      def onMessage(connection: Connection, message: ClientMessage): Unit = busy(20)
+      override def onTick(): Unit = busy(1)
+    val writer = SingleWriterHandler(table, tickPeriod = 5.millis) // ticks and messages are interleaved
+    (1 to 20).foreach(i => writer.onMessage(connection, ClientMessage.PlaceBet(i)))
+    writer.stop() // runs the messages already queued, then waits for the writer to finish
+    overlaps.get shouldBe 0

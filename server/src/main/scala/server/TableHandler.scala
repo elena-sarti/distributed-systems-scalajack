@@ -4,6 +4,8 @@ import protocol.{ClientMessage, ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
 import utils.ModelExports.*
+import java.time.Instant
+import scala.concurrent.duration.*
 
 /** The logic of one table: who is seated and how a hand is played through the clients' messages.
  *
@@ -13,11 +15,16 @@ import utils.ModelExports.*
  * NOT thread-safe on purpose: it must be driven by a [[SingleWriterHandler]], so that it is only
  * ever called by one thread and can use plain mutable state.
  *
- * @param initialBalance the balance given to a player when sitting down.
- * @param newGame        creates the game of the table (tests pass a game with a known deck).
+ * @param initialBalance  the balance given to a player when sitting down.
+ * @param newGame         creates the game of the table (tests pass a game with a known deck).
+ * @param clock           the current time (tests pass a clock that they move by hand).
+ * @param decisionTimeout how long the table waits for a decision of the players (an action, the answer to
+ *                        the insurance offer) before deciding for who is late.
  */
 final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
-                         newGame: () => Game = () => Game(List.empty)) extends SessionHandler:
+                         newGame: () => Game = () => Game(List.empty),
+                         clock: () => Instant = () => Instant.now(),
+                         decisionTimeout: FiniteDuration = TableHandler.DefaultDecisionTimeout) extends SessionHandler:
   import TableHandler.*
 
   private var game = newGame()
@@ -31,6 +38,9 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   /** Version of the last snapshot sent: it grows by one at every broadcast and is never reset,
    * not even when the table restarts with a new game, so it orders all the states of this table. */
   private var version = 0L
+
+  /** When the wait for the current decision runs out, if the table is waiting for one (see [[enter]]). */
+  private var deadline: Option[Instant] = None
 
   def onConnected(connection: Connection): Unit = () // nothing to do until the client asks to join
 
@@ -46,9 +56,43 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
         case AnswerInsurance(accept) => answerInsurance(seat, accept)
         case action                  => play(seat, action)
 
-  /** For now a disconnection frees the seat like a voluntary leave (mid-hand handling comes with C5). */
   def onDisconnected(connection: Connection): Unit =
-    seats.get(connection.id).foreach(leave)
+    seats.get(connection.id).foreach(disconnect)
+
+  /** The client is gone. If a hand is being played the seat is kept until the hand is over: the player's hands
+   * stand by themselves (the bets are settled like the others') and the table never waits for them.
+   * Otherwise there is nothing to settle and the seat is freed at once. */
+  private def disconnect(seat: Seat): Unit = phase match
+    case Phase.Insurance(awaiting, accepted) =>
+      keepUntilEndOfHand(seat)
+      recordInsuranceAnswers(awaiting - seat.player.name, accepted) // no answer: no insurance (unless already bought)
+    case Phase.Turn(current) =>
+      keepUntilEndOfHand(seat)
+      if belongsTo(current, seat) then stand(current) // it was their turn: the hand stands now
+    // otherwise their hands stand when their turn comes (see startTurn)
+    case _ => leave(seat) // betting, or no hand at all
+
+  /** The seat stays, but nothing is sent to it any more and its hands are played automatically. */
+  private def keepUntilEndOfHand(seat: Seat): Unit =
+    seats = seats.updated(seat.connection.id, seat.copy(connected = false))
+
+  /** Time passes. If the table has been waiting too long for a decision it decides for who is late (the hand
+   * stands, or no insurance), so a client that stays silent can never block the others. */
+  override def onTick(): Unit =
+    if deadline.exists(limit => !clock().isBefore(limit)) then decisionTimedOut()
+
+  private def decisionTimedOut(): Unit = phase match
+    case Phase.Insurance(_, accepted) => recordInsuranceAnswers(Set.empty, accepted) // who has not answered declines
+    case Phase.Turn(hand)             => stand(hand)
+    case _                            => deadline = None
+
+  /** Moves the table to a new phase. The phases in which the table waits for a decision of the players get a
+   * deadline: when it passes, [[onTick]] decides for who is late. */
+  private def enter(next: Phase): Unit =
+    phase = next
+    deadline = next match
+      case Phase.Insurance(_, _) | Phase.Turn(_) => Some(clock().plusMillis(decisionTimeout.toMillis))
+      case _                                     => None
 
   private def join(connection: Connection, name: String): Unit =
     rejectionReason(name) match
@@ -95,7 +139,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
 
   /** A new hand starts: every seated player is asked for a bet. */
   private def startHand(): Unit =
-    phase = Phase.Betting
+    enter(Phase.Betting)
     seats.values.foreach(requestBet)
 
   private def requestBet(seat: Seat): Unit =
@@ -129,7 +173,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
 
   /** The dealer shows an ace: every seated player is offered the insurance and the table waits for all the answers. */
   private def offerInsurance(): Unit =
-    phase = Phase.Insurance(awaiting = seats.values.map(_.player.name).toSet, accepted = List.empty)
+    enter(Phase.Insurance(awaiting = seats.values.map(_.player.name).toSet, accepted = List.empty))
     broadcastTable() // the clients must see their cards and the dealer's ace before they are asked
     seats.values.foreach(_.send(InsuranceOffer))
 
@@ -145,7 +189,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     if awaiting.isEmpty then
       game.handleInsurances(accepted)
       startPlayersTurns()
-    else phase = Phase.Insurance(awaiting, accepted)
+    else phase = Phase.Insurance(awaiting, accepted) // same deadline for everybody: no new [[enter]]
 
   /** Whether the player still has to play in this hand: has bet, and is not busted, standing or with a blackjack. */
   private def needsToPlay(player: Player): Boolean =
@@ -161,10 +205,13 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
 
   /** Tells everyone whose turn it is, and asks that player for an action. */
   private def startTurn(player: Player): Unit =
-    phase = Phase.Turn(player)
-    broadcastTable()
-    // the rules of the local game decide which actions are offered to the hand
-    seatOf(player).foreach(_.send(ActionRequest(player.name, game.canDoubleDown(player), game.canSplit(player))))
+    enter(Phase.Turn(player))
+    seatOf(player) match
+      case Some(seat) if !seat.connected => stand(player) // the client is gone: nobody to ask, the hand stands
+      case seat =>
+        broadcastTable()
+        // the rules of the local game decide which actions are offered to the hand
+        seat.foreach(_.send(ActionRequest(player.name, game.canDoubleDown(player), game.canSplit(player))))
 
   /** Only the player whose turn it is may act, on the hand being played; every other action is refused. */
   private def play(seat: Seat, action: ClientMessage): Unit = phase match
@@ -216,7 +263,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
    * and the hand ends. The whole sequence runs in one go inside the single writer, so no message of a
    * client can slip in between the reveal of the dealer's card and the payout. */
   private def playersDone(): Unit =
-    phase = Phase.DealerTurn
+    enter(Phase.DealerTurn)
     revealDealerCard()
     game.resolveInsurances() // same order as the local game
     game.computeDealerTurn() // the card is already face up: the dealer draws up to 17
@@ -235,6 +282,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   /** Cleans the table as the local game does (split hands, players without money), then starts the next hand. */
   private def endHand(): Unit =
     game.removeSplitPlayers()
+    removeDisconnectedSeats()
     sendGameOverToBrokePlayers()
     game.currentBets = List.empty
     game.handleHandEnd() // every player Active again with an empty hand, empty dealer's hand
@@ -243,6 +291,12 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     else
       broadcastTable()
       startHand()
+
+  /** The bets are settled: the seats of the clients that disconnected during the hand are freed now. */
+  private def removeDisconnectedSeats(): Unit =
+    val gone = seats.values.filterNot(_.connected).toList
+    game.removeLeavingPlayers(gone.map(_.player))
+    seats = seats -- gone.map(_.connection.id)
 
   /** Players who cannot afford the minimum bet are told the game is over for them and leave the table. */
   private def sendGameOverToBrokePlayers(): Unit =
@@ -261,13 +315,13 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   private def resetTable(): Unit =
     seats = Map.empty
     game = newGame()
-    phase = Phase.Idle
+    enter(Phase.Idle)
 
   /** Nobody is left at the table: the hand is dropped and the table waits for new players. */
   private def abandonHand(): Unit =
     game.currentBets = List.empty
     game.handleHandEnd()
-    phase = Phase.Idle
+    enter(Phase.Idle)
 
   /** The name of the player a hand belongs to: a split hand is named after its player ("Alice_split1" is Alice's). */
   private def ownerName(hand: Player): String = hand.name.split("_").head // same convention as the model
@@ -311,6 +365,9 @@ object TableHandler:
   val ActionNotAllowed = "This action is not allowed now"
   val NoInsuranceOffered = "No insurance is offered to you now"
 
+  /** How long the table waits for a decision (an action, the answer to the insurance offer) before deciding for the player. */
+  val DefaultDecisionTimeout: FiniteDuration = 30.seconds
+
   /** The phases of a hand: the table moves from one to the next when the expected messages arrive. */
   private enum Phase:
     case Idle                 // no hand: the next player who sits down starts one
@@ -319,6 +376,7 @@ object TableHandler:
     case Turn(player: Player) // cards dealt: waiting for the action of this player
     case DealerTurn           // every player has played: the dealer plays and the bets are settled
 
-  /** A seated player and the connection of its client. */
-  private final case class Seat(connection: Connection, player: Player):
-    def send(message: ServerMessage): Unit = connection.send(message)
+  /** A seated player and the connection of its client. After a disconnection during a hand the seat is kept
+   * until the end of the hand with `connected = false`: nothing is sent to it any more. */
+  private final case class Seat(connection: Connection, player: Player, connected: Boolean = true):
+    def send(message: ServerMessage): Unit = if connected then connection.send(message)

@@ -12,3 +12,7 @@ trait SessionHandler:
   def onConnected(connection: Connection): Unit
   def onMessage(connection: Connection, message: ClientMessage): Unit
   def onDisconnected(connection: Connection): Unit
+
+  /** Called periodically by the single writer, on the same thread as the other events, so that the handler
+   * can react to the passing of time (e.g. a player who does not answer). By default nothing happens. */
+  def onTick(): Unit = ()

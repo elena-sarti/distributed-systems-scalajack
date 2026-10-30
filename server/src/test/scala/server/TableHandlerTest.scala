@@ -6,6 +6,7 @@ import protocol.{ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
 import server.TableHandler.*
+import java.time.Instant
 import java.util.UUID
 import scala.collection.mutable.ListBuffer
 
@@ -19,12 +20,17 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
 
   var table: TableHandler = _
 
+  /** The clock of the tables built by [[tableWithDeck]]: it only moves when a test moves it. */
+  private val startTime = Instant.parse("2026-01-01T00:00:00Z")
+  private var now = startTime
+
   override def beforeEach(): Unit =
+    now = startTime
     table = TableHandler()
 
   /** A table whose deck deals exactly the given cards, in this order. */
   private def tableWithDeck(cards: StandardCard*): TableHandler =
-    TableHandler(newGame = () => Game(List.empty, Deck.testDeck(cards*)))
+    TableHandler(newGame = () => Game(List.empty, Deck.testDeck(cards*)), clock = () => now)
 
   /** A new client that asks to sit with the given name. */
   private def join(name: String, at: TableHandler = table): FakeConnection =
@@ -79,7 +85,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     seatedPlayers(alice) shouldBe List("Alice")
     join("Bob").inbox.head shouldBe JoinAccepted("Bob", DefaultBalance) // the name is free again
 
-  test("a disconnection frees the seat like a voluntary leave"):
+  test("a disconnection while nobody is playing frees the seat at once"):
     val alice = join("Alice")
     val bob   = join("Bob")
     table.onDisconnected(bob)
@@ -591,3 +597,98 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onMessage(bob, LeaveTable)
     alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
     lastTable(alice).players.map(_.bet) shouldBe List(Some(15))
+
+  // ---- disconnection in the middle of a hand, and decisions that do not arrive (C5) ----
+
+  /** Alice 10+6 and Bob 9+7 against a dealer 8+5 who draws a ten and busts: if both stand, both win 20. */
+  private def aliceAndBobAgainstBustingDealer(): (TableHandler, FakeConnection, FakeConnection) =
+    aliceAndBobWith(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five, Value.Ten)
+
+  test("a player who disconnects on their turn stands automatically and the next player is asked"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onDisconnected(alice)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
+    lastTable(bob).currentTurn shouldBe Some("Bob")
+    lastTable(bob).players.map(_.state) shouldBe List(PlayerState.Standing, PlayerState.Active)
+    lastTable(bob).players.map(_.name) shouldBe List("Alice", "Bob") // the seat is kept until the end of the hand
+
+  test("the bet of a player who disconnected is settled like the others and the seat is freed at the end of the hand"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onDisconnected(alice)
+    dealt.onMessage(bob, Stand)
+    handResults(bob) shouldBe List(("Alice", DefaultBalance - 10 + 20), ("Bob", DefaultBalance - 10 + 20))
+    lastTable(bob).players.map(_.name) shouldBe List("Bob") // the next hand starts without Alice
+    bob.inbox.last shouldBe BetRequest(DefaultBalance - 10 + 20, Game.MinGameBet)
+
+  test("nothing is sent any more to a client that has disconnected"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onDisconnected(alice)
+    val messagesBefore = alice.inbox.size
+    dealt.onMessage(bob, Stand)
+    alice.inbox.size shouldBe messagesBefore
+
+  test("the hands of a player who disconnected stand when their turn comes, without asking"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onDisconnected(bob) // it is Alice's turn: Bob's hand has to wait for its turn
+    dealt.onMessage(alice, Stand)
+    bob.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 20), ("Bob", DefaultBalance - 10 + 20))
+
+  test("a player who disconnects after a split has all the hands standing"):
+    // Alice 8+8, Bob 9+7, dealer 9+7; Alice splits (a three and a two) and disconnects; the dealer draws a ten and busts
+    val (dealt, alice, bob) = aliceAndBobWith(Value.Eight, Value.Nine, Value.Nine, Value.Eight, Value.Seven,
+      Value.Seven, Value.Three, Value.Two, Value.Ten)
+    dealt.onMessage(alice, Split)
+    dealt.onDisconnected(alice)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
+    dealt.onMessage(bob, Stand)
+    handResults(bob) shouldBe List(("Alice", DefaultBalance - 20 + 40), ("Bob", DefaultBalance - 10 + 20))
+
+  test("a player who disconnects during the insurance offer counts as declining and nobody waits"):
+    val (dealt, alice, bob) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    dealt.onDisconnected(bob)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    lastTable(alice).players.map(_.bet) shouldBe List(Some(15), Some(10)) // Bob is still seated, without insurance
+
+  /** Moves the clock of the tables built by [[tableWithDeck]] and lets the table notice it. */
+  private def passTime(at: TableHandler, seconds: Long): Unit =
+    now = now.plusSeconds(seconds)
+    at.onTick()
+
+  test("a player who does not act in time stands automatically and the next player is asked"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
+    lastTable(bob).players.map(_.state) shouldBe List(PlayerState.Standing, PlayerState.Active)
+    lastTable(alice).players.map(_.name) shouldBe List("Alice", "Bob") // Alice is late, not gone: she keeps her seat
+
+  test("the table does not decide for a player before the time is up"):
+    val (dealt, _, bob) = aliceAndBobAgainstBustingDealer()
+    passTime(dealt, DefaultDecisionTimeout.toSeconds - 1)
+    lastTable(bob).currentTurn shouldBe Some("Alice")
+    bob.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
+
+  test("every action gives the player a new time to decide"):
+    val (dealt, alice, bob) = aliceAndBobWith(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five, Value.Two)
+    passTime(dealt, 20)
+    dealt.onMessage(alice, Hit)              // at 20 s: the new time runs until 50 s
+    passTime(dealt, 20)                      // 40 s: only 20 s after her last action
+    lastTable(bob).currentTurn shouldBe Some("Alice")
+    passTime(dealt, 11)                      // 51 s: more than 30 s after her last action
+    lastTable(bob).currentTurn shouldBe Some("Bob")
+
+  test("a player who does not answer the insurance offer in time declines it"):
+    val (dealt, alice, _) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    lastTable(alice).players.map(_.bet) shouldBe List(Some(15), Some(10)) // only Alice bought it
+
+  test("a late tick after the hand is over changes nothing"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onMessage(alice, Stand)
+    dealt.onMessage(bob, Stand) // the hand is over: the bets for the next one are requested
+    val messagesBefore = alice.inbox.size
+    passTime(dealt, 3600)
+    alice.inbox.size shouldBe messagesBefore
