@@ -648,3 +648,28 @@ class GameTest extends AnyFunSuite with BeforeAndAfterEach:
     val newcomer = NormalPlayer("Carl", 100)
     game.addPlayer(newcomer)
     game.players shouldBe List(firstPlayer, secondPlayer, newcomer)
+
+  test("transferBalance should do nothing when the player has no money left"):
+    val splitPlayer = SplitPlayer(firstPlayer.name + "_split1", ace)
+    val testGame = Game(List(firstPlayer, splitPlayer))
+    firstPlayer.withdraw(firstPlayer.balance.totalValue)
+    testGame.transferBalance(firstPlayer) // moving 0 used to fail
+    splitPlayer.balance.totalValue shouldBe 0.0
+
+  test("transferBalance should not move money to a player whose name merely contains the name"):
+    val similarName = NormalPlayer(firstPlayer.name + "2", 100) // "Alice2" contains "Alice"
+    val testGame = Game(List(firstPlayer, similarName))
+    val expectedBalance = firstPlayer.balance.totalValue
+    testGame.transferBalance(firstPlayer)
+    firstPlayer.balance.totalValue shouldBe expectedBalance
+    similarName.balance.totalValue shouldBe 100.0
+
+  test("handlePayout should not fail when a split hand without money loses"):
+    val lostHand = SplitPlayer(firstPlayer.name + "_split1", ten) // ten + eight = 18
+    lostHand.addCard(eight)
+    val testGame = Game(List(firstPlayer, lostHand))
+    testGame.currentBets = List(Bet(lostHand, betAmount))
+    giveCards(testGame.dealer)(ten, ten)
+    val expectedBalance = firstPlayer.balance.totalValue
+    testGame.handlePayout() // crediting 0 used to fail
+    firstPlayer.balance.totalValue shouldBe expectedBalance

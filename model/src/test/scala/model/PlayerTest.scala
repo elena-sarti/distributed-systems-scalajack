@@ -127,3 +127,8 @@ class PlayerTest extends AnyFunSuite with BeforeAndAfterEach:
     bot.computeSafeBet shouldBe 12
     bot.bet shouldBe 12
     bot.toString should include("BET: 12")
+
+  test("the insurance does not carry over to the next hand"):
+    player.hasInsurance = true
+    player.prepareForNewHand()
+    player.hasInsurance shouldBe false

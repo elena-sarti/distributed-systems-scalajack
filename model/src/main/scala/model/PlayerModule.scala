@@ -121,6 +121,10 @@ object PlayerModule:
     override def hasInsurance_=(value: Boolean): Unit =
       insurance = value
 
+    /** The insurance is bought hand by hand: a new hand must never start with the previous one's insurance. */
+    override def prepareForNewHand(): Unit =
+      super.prepareForNewHand()
+      insurance = false
 
   class SplitPlayer(override val name: String,
                     val splitCard: StandardCard,

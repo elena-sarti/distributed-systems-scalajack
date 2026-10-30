@@ -175,10 +175,13 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
 
   /** A table with Alice already seated, her bet of 10 placed and the cards dealt from `cards`
    * (deal order: Alice, dealer, Alice, dealer face down, then the cards drawn later). */
-  private def aliceDealt(cards: Value*): (TableHandler, FakeConnection) =
+  private def aliceDealt(cards: Value*): (TableHandler, FakeConnection) = aliceBetting(10, cards*)
+
+  /** Same as [[aliceDealt]], but Alice bets `bet`. */
+  private def aliceBetting(bet: Int, cards: Value*): (TableHandler, FakeConnection) =
     val dealt = tableWithDeck(cards.map(card)*)
     val alice = join("Alice", dealt)
-    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(alice, PlaceBet(bet))
     (dealt, alice)
 
   /** The table as it was when the hand ended: the last update before the results of the hand
@@ -194,7 +197,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
 
   test("after the deal the first player is asked to act and everyone sees whose turn it is"):
     val (_, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
-    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = false, canSplit = false)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
     lastTable(alice).currentTurn shouldBe Some("Alice")
 
   test("hit gives one more card and the player is asked again"):
@@ -227,15 +230,19 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 25))
     alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
 
-  test("double down and split are not available yet"):
-    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
-    dealt.onMessage(alice, DoubleDown)
+  test("a split is refused when the hand is not a pair"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven) // 10 + 6
+    dealt.onMessage(alice, Split)
     alice.inbox.last shouldBe ErrorMessage(ActionNotAllowed)
 
   /** Alice and Bob seated, both bet 10, cards dealt: Alice 10+6, Bob 9+7, dealer 8 and a hidden 5. */
   private def aliceAndBobDealt(): (TableHandler, FakeConnection, FakeConnection) =
-    // deal order: Alice, Bob, dealer, Alice, Bob, dealer (face down)
-    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five).map(card)*)
+    aliceAndBobWith(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five)
+
+  /** Alice and Bob seated, both bet 10, the cards dealt from `cards`
+   * (deal order: Alice, Bob, dealer, Alice, Bob, dealer face down, then the cards drawn later). */
+  private def aliceAndBobWith(cards: Value*): (TableHandler, FakeConnection, FakeConnection) =
+    val dealt = tableWithDeck(cards.map(card)*)
     val alice = join("Alice", dealt)
     val bob   = join("Bob", dealt)
     dealt.onMessage(alice, PlaceBet(10))
@@ -252,13 +259,13 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
   test("when a player ends the turn the next one is asked to act"):
     val (dealt, alice, bob) = aliceAndBobDealt()
     dealt.onMessage(alice, Stand)
-    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = false, canSplit = false)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
     lastTable(alice).currentTurn shouldBe Some("Bob")
 
   test("if the player whose turn it is leaves, the turn passes to the next one"):
     val (dealt, alice, bob) = aliceAndBobDealt()
     dealt.onMessage(alice, LeaveTable)
-    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = false, canSplit = false)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
 
   test("after the last player the dealer reveals the hidden card and draws up to 17, and everyone sees it"):
     val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
@@ -431,3 +438,156 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     seenByDave shouldBe lastTable(alice) // the same snapshot, with the same version
     seenByDave.currentTurn shouldBe Some("Alice")
     seenByDave.dealer.hiddenCards shouldBe 1
+
+  test("double down doubles the bet, draws one card and ends the turn"):
+    // Alice 5+6 doubles and draws a ten (21); the dealer has 17, so Alice wins the doubled bet
+    val (dealt, alice) = aliceDealt(Value.Five, Value.Ten, Value.Six, Value.Seven, Value.Ten)
+    dealt.onMessage(alice, DoubleDown)
+    val hand = tableAtEndOfHand(alice).players.head
+    hand.cards.map(_.value) shouldBe List(Value.Five, Value.Six, Value.Ten)
+    hand.bet shouldBe Some(20)
+    hand.state shouldBe PlayerState.Standing
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 40))
+
+  test("a doubled hand that busts loses the doubled bet"):
+    // Alice 10+6 doubles and draws a king (26)
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Eight, Value.King)
+    dealt.onMessage(alice, DoubleDown)
+    aliceState(alice) shouldBe PlayerState.Busted
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20))
+
+  test("double down is refused after the first card"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Hit)
+    dealt.onMessage(alice, DoubleDown)
+    alice.inbox.last shouldBe ErrorMessage(ActionNotAllowed)
+
+  test("double down is neither offered nor accepted when the balance cannot cover the doubled bet"):
+    val (dealt, alice) = aliceBetting(DefaultBalance.toInt, Value.Ten, Value.Nine, Value.Six, Value.Seven)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = false, canSplit = false)
+    dealt.onMessage(alice, DoubleDown)
+    alice.inbox.last shouldBe ErrorMessage(ActionNotAllowed)
+
+  /** Alice has a pair of eights and the dealer shows a nine; then come the two cards of the split (a three and
+   * a two) and a ten for the dealer, who has 9+7=16 and busts. */
+  private val splitDeck = List(Value.Eight, Value.Nine, Value.Eight, Value.Seven, Value.Three, Value.Two, Value.Ten)
+
+  test("a pair can be split: the player is offered the split"):
+    val (_, alice) = aliceDealt(splitDeck*)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = true)
+
+  test("a split makes two hands, each with its own bet and a new card, and the player plays the first again"):
+    val (dealt, alice) = aliceDealt(splitDeck*)
+    dealt.onMessage(alice, Split)
+    val table = lastTable(alice)
+    table.players.map(_.name) shouldBe List("Alice", "Alice_split1")
+    table.players.map(_.cards.map(_.value)) shouldBe List(List(Value.Eight, Value.Three), List(Value.Eight, Value.Two))
+    table.players.map(_.bet) shouldBe List(Some(10), Some(10))
+    table.currentTurn shouldBe Some("Alice")
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+
+  test("after the first hand the turn passes to the split hand, and its requests reach the same client"):
+    val (dealt, alice) = aliceDealt(splitDeck*)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Stand)
+    lastTable(alice).currentTurn shouldBe Some("Alice_split1")
+    alice.inbox.last shouldBe ActionRequest("Alice_split1", canDoubleDown = true, canSplit = false)
+
+  test("both hands are paid at the end and the money goes back to the player"):
+    val (dealt, alice) = aliceDealt(splitDeck*)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Stand)
+    dealt.onMessage(alice, Stand)
+    tableAtEndOfHand(alice).players.map(_.state) shouldBe List(PlayerState.Standing, PlayerState.Standing)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 40)) // the dealer busts: both hands win 20
+
+  test("a player can split with all the money left and the hands are still paid"):
+    val (dealt, alice) = aliceBetting(50, splitDeck*) // 50 for the bet and 50 for the split: the balance is 0
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Stand)
+    alice.inbox.last shouldBe ActionRequest("Alice_split1", canDoubleDown = false, canSplit = false)
+    dealt.onMessage(alice, Stand)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 100 + 200))
+
+  test("a blackjack after a split is paid at once and the other hand keeps playing"):
+    // Alice A+A splits: the first hand gets a king (blackjack), the new one a nine; the dealer 6+5 draws a ten (21)
+    val (dealt, alice) = aliceDealt(Value.Ace, Value.Six, Value.Ace, Value.Five, Value.King, Value.Nine, Value.Ten)
+    dealt.onMessage(alice, Split)
+    alice.inbox.last shouldBe ActionRequest("Alice_split1", canDoubleDown = false, canSplit = false)
+    dealt.onMessage(alice, Stand)
+    // 100 - 10 - 10 (the two bets) + 25 (the blackjack); the second hand loses and has no money of its own
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 25))
+
+  test("a player who leaves after a split takes all the hands away"):
+    // Alice 8+8, Bob 9+7, dealer 10 and a hidden 6; the split draws a three and a two
+    val (dealt, alice, bob) = aliceAndBobWith(Value.Eight, Value.Nine, Value.Ten, Value.Eight, Value.Seven,
+      Value.Six, Value.Three, Value.Two)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, LeaveTable)
+    lastTable(bob).players.map(_.name) shouldBe List("Bob")
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
+
+  test("players whose names contain each other do not exchange money"):
+    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five).map(card)*)
+    val ann  = join("Ann", dealt)
+    val anna = join("Anna", dealt)
+    List(ann, anna).foreach(dealt.onMessage(_, PlaceBet(10)))
+    dealt.onMessage(ann, Stand)
+    lastTable(ann).players.map(player => (player.name, player.balance)) shouldBe
+      List(("Ann", DefaultBalance - 10), ("Anna", DefaultBalance - 10))
+
+  /** Alice and Bob seated, both bet 10; the dealer shows an ace and has a hidden six. */
+  private def aliceAndBobFacingAce(): (TableHandler, FakeConnection, FakeConnection) =
+    aliceAndBobWith(Value.Ten, Value.Nine, Value.Ace, Value.Six, Value.Seven, Value.Six)
+
+  test("when the dealer shows an ace the player is offered the insurance before the turns begin"):
+    val (_, alice) = aliceDealt(Value.Ten, Value.Ace, Value.Six, Value.King)
+    alice.inbox.last shouldBe InsuranceOffer
+    lastTable(alice).dealer.visibleCards.map(_.value) shouldBe List(Value.Ace) // the client sees the ace it is asked about
+    alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
+
+  test("the insurance is not offered when the dealer does not show an ace"):
+    val (_, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
+    alice.inbox.contains(InsuranceOffer) shouldBe false
+
+  test("the turns begin only when every player has answered the insurance offer"):
+    val (dealt, alice, bob) = aliceAndBobFacingAce()
+    List(alice, bob).foreach(_.inbox.last shouldBe InsuranceOffer)
+    dealt.onMessage(alice, AnswerInsurance(true))
+    alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false // Bob has not answered yet
+    dealt.onMessage(bob, AnswerInsurance(false))
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+
+  test("an accepted insurance costs half of the bet, a declined one costs nothing"):
+    val (dealt, alice, bob) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    dealt.onMessage(bob, AnswerInsurance(false))
+    val table = lastTable(alice)
+    table.players.map(_.bet) shouldBe List(Some(15), Some(10)) // Alice: 10 + 5 of insurance
+    table.players.map(_.balance) shouldBe List(DefaultBalance - 15, DefaultBalance - 10)
+
+  test("with the dealer's blackjack the insurance is paid, as in the local game"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Ace, Value.Six, Value.King) // the dealer has a blackjack
+    dealt.onMessage(alice, AnswerInsurance(true))
+    dealt.onMessage(alice, Stand)
+    // 100 - 10 (the bet, lost) - 5 (the insurance) + 10 (paid by the insurance)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 - 5 + 10))
+
+  test("an insurance answer is refused when no insurance was offered"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
+    dealt.onMessage(alice, AnswerInsurance(true))
+    alice.inbox.last shouldBe ErrorMessage(NoInsuranceOffered)
+
+  test("a player cannot answer the insurance offer twice"):
+    val (dealt, alice, _) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    dealt.onMessage(alice, AnswerInsurance(true))
+    alice.inbox.last shouldBe ErrorMessage(NoInsuranceOffered)
+    lastTable(alice).players.head.bet shouldBe Some(10) // the insurance is applied once, when everybody has answered
+
+  test("the table does not wait for the insurance answer of a player who leaves"):
+    val (dealt, alice, bob) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    dealt.onMessage(bob, LeaveTable)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    lastTable(alice).players.map(_.bet) shouldBe List(Some(15))

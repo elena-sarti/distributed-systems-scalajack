@@ -521,12 +521,15 @@ object GameModule:
           None
 
       override def transferBalance(player: Player): Unit =
-        val name = if player.isInstanceOf[SplitPlayer] then player.name.split("_").head else player.name
+        def ownerName(p: Player): String = p.name.split("_").head
+        // only a hand split from the same player receives the money (not a player whose name merely contains it)
+        def isSplitOfSamePlayer(next: Player): Boolean =
+          next.isInstanceOf[SplitPlayer] && ownerName(next) == ownerName(player)
         val index = currentPlayers.indexOf(player)
         val balance = player.balance.totalValue
-        if index < currentPlayers.length - 1 then
+        if balance > 0 && index < currentPlayers.length - 1 then // moving 0 is not allowed (and pointless)
           val nextPlayer = currentPlayers(index + 1)
-          if nextPlayer.name.contains(name) then
+          if isSplitOfSamePlayer(nextPlayer) then
             player.withdraw(balance)
             nextPlayer.deposit(balance)
 
@@ -546,7 +549,8 @@ object GameModule:
         def creditPlayer(player: Player, payout: Double): Unit = player match
           case sp: SplitPlayer =>
             val originalPlayer = currentPlayers.find(_.name == player.name.split("_").head).get
-            originalPlayer.deposit(player.balance.totalValue + payout)
+            val amount = player.balance.totalValue + payout
+            if amount > 0 then originalPlayer.deposit(amount) // a deposit of 0 is not allowed: nothing to give back
           case _               =>
             if payout > 0 then player.deposit(payout)
 
