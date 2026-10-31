@@ -2,6 +2,15 @@ package protocol
 
 import upickle.default.ReadWriter
 
+/** The decisions of a player that the table waits for, and that it takes by itself when the time is up. */
+enum Decision derives ReadWriter:
+ /** The bet for the next hand: a player who is late sits out the hand. */
+  case Bet
+   /** The answer to the insurance offer: a player who is late declines it. */
+  case Insurance
+  /** The action of a hand (hit, stand, ...): a hand whose player is late stands. */
+  case Action
+
 /** Messages that a table node sends to its clients.
  *
  * They are of two kinds:
@@ -67,3 +76,10 @@ enum ServerMessage derives ReadWriter:
    * @param reason a human-readable explanation (e.g. "it is not your turn").
    */
   case ErrorMessage(reason: String)
+
+  /** The time to decide is over and the table has decided for the player (see [[Decision]] for what it chose).
+   * Sent only to the late player, so a client can explain why the game went on without them.
+   * 
+   * @param decision which decision the player did not take in time.
+   */
+  case DecisionTimedOut(decision: Decision)

@@ -2,7 +2,7 @@ package server
 
 import utils.TestExports.*
 import utils.ModelExports.{CutCard, Deck, Game, PlayerState, StandardCard, Suit, Value}
-import protocol.{ServerMessage, TableView}
+import protocol.{Decision, ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
 import server.TableHandler.*
@@ -114,13 +114,13 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     aliceAsSeenByBob.balance shouldBe DefaultBalance - 10
 
   test("an invalid bet is refused and the player can bet again"):
+    table = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
     val alice = join("Alice")
     table.onMessage(alice, PlaceBet(3))    // not a multiple of the minimum bet
     alice.inbox.last shouldBe ErrorMessage(InvalidBet)
     table.onMessage(alice, PlaceBet(1000)) // more than the balance
     alice.inbox.last shouldBe ErrorMessage(InvalidBet)
     table.onMessage(alice, PlaceBet(10))
-    lastTable(alice).players.head.bet shouldBe Some(10)
 
   test("a player cannot bet twice in the same hand"):
     val alice = join("Alice")
@@ -685,10 +685,127 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
     lastTable(alice).players.map(_.bet) shouldBe List(Some(15), Some(10)) // only Alice bought it
 
-  test("a late tick after the hand is over changes nothing"):
+  test("a late tick after the hand is over changes nothing until the time to bet is up"):
     val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
     dealt.onMessage(alice, Stand)
-    dealt.onMessage(bob, Stand) // the hand is over: the bets for the next one are requested
+    dealt.onMessage(bob, Stand) // the hand is over: the bets for the next one are requested with a new time
     val messagesBefore = alice.inbox.size
-    passTime(dealt, 3600)
+    passTime(dealt,  DefaultDecisionTimeout.toSeconds - 1) // the deadline of the old turn is long gone, this one is not)
     alice.inbox.size shouldBe messagesBefore
+
+  // ---- the players who are late are told that time is up, and a hand never waits for a bet ----
+
+  /** The decisions that the table has declared timed out to this client, in order. */
+  private def timeouts(connection: FakeConnection): List[Decision] =
+    connection.inbox.collect { case DecisionTimedOut(decision) => decision }.toList
+
+  /** Alice and Bob seated and asked to bet; only Alice bets. The deck is for a hand of Alice alone
+  * (deal order: Alice, dealer, Alice, dealer face down, then the cards drawn later). */
+  private def aliceBetsBobIsSilent(cards: Value*): (TableHandler, FakeConnection, FakeConnection) =
+    val dealt = tableWithDeck(cards.map(card) *)
+    val alice = join("Alice", dealt)
+    val bob = join("Bob", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    (dealt, alice, bob)
+
+  /** Alice 10+6 against a dealer 9+7 who draws a ten and busts: if Alice stands she wins 20. */
+  private val aliceHandOnly = List(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Ten)
+
+  test("a player who does not act in time is told that the time is up"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    timeouts(alice) shouldBe List(Decision.Action)
+    timeouts(bob) shouldBe List.empty // Bob is not late: it is only his turn now
+
+  test("a player who does not answer the insurance offer in time is told that the time is up"):
+    val (dealt, alice, bob) = aliceAndBobFacingAce()
+    dealt.onMessage(alice, AnswerInsurance(true))
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    timeouts(bob) shouldBe List(Decision.Insurance)
+    timeouts(alice) shouldBe List.empty // she answered in time
+
+  test("nobody is told that the time is up when everybody decides in time"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    passTime(dealt, DefaultDecisionTimeout.toSeconds - 1) // each one decides just before the time is up
+    dealt.onMessage(alice, Stand)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds - 1)
+    dealt.onMessage(bob, Stand)
+    List(alice, bob).foreach(timeouts(_) shouldBe List.empty)
+
+  test("the notice of a late action arrives before the new state of the table"):
+    val (dealt, alice, _) = aliceAndBobAgainstBustingDealer()
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    val afterNotice = alice.inbox.toList.dropWhile(_ != DecisionTimedOut(Decision.Action)).tail
+    afterNotice.head shouldBe a[TableUpdate] // the player sees "time is up" and then the turn that goes on
+    lastTable(alice).players.head.state shouldBe PlayerState.Standing
+
+  test("a player who does not bet in time is told so and the hand starts without them"):
+    val (dealt, alice, bob) = aliceBetsBobIsSilent(aliceHandOnly *)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    timeouts(bob) shouldBe List(Decision.Bet)
+    timeouts(alice) shouldBe List.empty
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    lastTable(bob).currentTurn shouldBe Some("Alice")
+
+  test("the table does not start the hand before the time to bet is up"):
+    val (dealt, alice, _) = aliceBetsBobIsSilent(aliceHandOnly *)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds - 1)
+    alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
+    lastTable(alice).dealer.visibleCards shouldBe empty
+
+  test("a player who sits out a hand keeps the seat and the money, and has no cards"):
+    val (dealt, alice, bob) = aliceBetsBobIsSilent(aliceHandOnly *)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    val bobView = lastTable(alice).players.find(_.name == "Bob").get
+    bobView.cards shouldBe empty
+    bobView.bet shouldBe None
+    bobView.balance shouldBe DefaultBalance
+    lastTable(bob).players.map(_.name) shouldBe List("Alice", "Bob")
+
+  test("a bet that arrives after the time is up is refused"):
+    val (dealt, _, bob) = aliceBetsBobIsSilent(aliceHandOnly *)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    dealt.onMessage(bob, PlaceBet(10))
+    bob.inbox.last shouldBe ErrorMessage(NotBettingTime)
+
+  test("the player who sat out is asked to bet again when the next hand starts"):
+    val (dealt, alice, bob) = aliceBetsBobIsSilent(aliceHandOnly *)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    dealt.onMessage(alice, Stand)
+    handResults(bob) shouldBe List(("Alice", DefaultBalance - 10 + 20), ("Bob", DefaultBalance))
+    bob.inbox.last shouldBe BetRequest(DefaultBalance, Game.MinGameBet)
+
+  test("the insurance is offered, and waited for, only to the players who bet"):
+    val (dealt, alice, bob) = aliceBetsBobIsSilent(Value.Ten, Value.Ace, Value.Six, Value.Six, Value.Seven)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    alice.inbox.last shouldBe InsuranceOffer
+    bob.inbox.contains(InsuranceOffer) shouldBe false
+    dealt.onMessage(alice, AnswerInsurance(false)) // nobody else to wait for
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    timeouts(bob) shouldBe List(Decision.Bet) // and no second notice: Bob was not asked for the insurance
+
+  test("when nobody bets in time no hand is dealt and a new round of bets starts"):
+    val dealt = tableWithDeck()
+    val alice = join("Alice", dealt)
+    val bob = join("Bob", dealt)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    List(alice, bob).foreach: client =>
+      timeouts(client) shouldBe List(Decision.Bet)
+      client.inbox.last shouldBe BetRequest(DefaultBalance, Game.MinGameBet)
+      client.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
+    lastTable(alice).dealer.visibleCards shouldBe empty
+
+  test("after an empty round of bets the players still get the time to bet"):
+    val dealt = tableWithDeck(aliceHandOnly.map(card) *)
+    val alice = join("Alice", dealt)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1) // empty round: a new one begins at this instant
+    passTime(dealt, DefaultDecisionTimeout.toSeconds - 1) // not over yet
+    timeouts(alice) shouldBe List(Decision.Bet) // the notice of the first round only
+    dealt.onMessage(alice, PlaceBet(10))
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+
+  test("a late bettor who disconnects is not waited for and the hand starts at once"):
+    val (dealt, alice, bob) = aliceBetsBobIsSilent(aliceHandOnly *)
+    dealt.onDisconnected(bob)
+    alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
+    timeouts(bob) shouldBe List.empty

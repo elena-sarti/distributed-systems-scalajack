@@ -142,6 +142,19 @@ class GameTest extends AnyFunSuite with BeforeAndAfterEach:
     messages.count(_.contains("Alice")) shouldBe 2
     messages.count(_.contains("Dealer")) shouldBe 2
 
+  test("distributeCards to a subset of players gives cards only to them and to the dealer"):
+    val initialDeckSize = game.deck.size()
+    val messages = game.distributeCards(List(firstPlayer))
+    firstPlayer.cards.size shouldBe 2
+    secondPlayer.cards shouldBe empty // sits out the hand: no cards, no change
+    game.dealer.cards.size shouldBe 2
+    game.deck.size() shouldBe (initialDeckSize - 2 * 2) // 2 cards each, for Alice and for the dealer
+    messages.size shouldBe 4
+
+  test("distributeCards without arguments deals to every player"):
+    game.distributeCards()
+    game.players.foreach(_.cards.size shouldBe 2)
+
   test("dealerHasAce should return true when the dealer has a face-up Ace"):
     giveCards(game.dealer)(ace, hiddenCard)
     game.dealerHasAce shouldBe true

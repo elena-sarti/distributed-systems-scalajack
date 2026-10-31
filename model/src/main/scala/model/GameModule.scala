@@ -94,6 +94,14 @@ object GameModule:
      */
     def distributeCards(): List[String]
 
+    /** Distributes two cards, one at a time, to the given players and to the dealer only.
+     * Used at a networked table, where a seated player who did not bet in time sits out the hand.
+     *
+     * @param participants the players who take part in the hand, in turn order.
+     * @return a list containing the value to print in standard output for every card that has been distributed
+     */
+    def distributeCards(participants: List[Player]): List[String]
+
     /** Returns the players who got a BJ right after the initial deal (two cards with sum equal to 21).
      *
      * @return the list of players who have blackjack in the current round (can be empty).
@@ -372,9 +380,11 @@ object GameModule:
           participant.addCard(card)
           card
 
-      override def distributeCards(): List[String] =
-        def distributeCards_(participants: List[Participant], faceUp: Boolean = true): List[String] =
-          participants.flatMap(participant =>
+      override def distributeCards(): List[String] = distributeCards(players) // everybody takes part
+
+      override def distributeCards(participants: List[Player]): List[String] =
+        def distributeCards_(recipients: List[Participant], faceUp: Boolean = true): List[String] =
+          recipients.flatMap(participant =>
             drawStandardCard() match
               case Some(card: StandardCard) =>
                 if participant.isInstanceOf[Dealer] && !faceUp then
@@ -384,9 +394,9 @@ object GameModule:
                 List(participant.toString)
               case _                        => List.empty
           )
-        val participants: List[Participant] = players :+ gameDealer
-        val firstRound = distributeCards_(participants)
-        val secondRound = distributeCards_(participants, faceUp = false)
+        val dealTo: List[Participant] = participants :+ gameDealer
+        val firstRound = distributeCards_(dealTo)
+        val secondRound = distributeCards_(dealTo, faceUp = false)
         firstRound ::: secondRound
 
       override def dealerHasAce: Boolean = dealer.cards.exists(card => card.value == Value.Ace && card.isFaceUp)

@@ -1,6 +1,6 @@
 package server
 
-import protocol.{ClientMessage, ServerMessage, TableView}
+import protocol.{ClientMessage, Decision, ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
 import utils.ModelExports.*
@@ -18,7 +18,7 @@ import scala.concurrent.duration.*
  * @param initialBalance  the balance given to a player when sitting down.
  * @param newGame         creates the game of the table (tests pass a game with a known deck).
  * @param clock           the current time (tests pass a clock that they move by hand).
- * @param decisionTimeout how long the table waits for a decision of the players (an action, the answer to
+ * @param decisionTimeout how long the table waits for a decision of the players (a bet, an action, the answer to
  *                        the insurance offer) before deciding for who is late.
  */
 final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
@@ -76,22 +76,38 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   private def keepUntilEndOfHand(seat: Seat): Unit =
     seats = seats.updated(seat.connection.id, seat.copy(connected = false))
 
-  /** Time passes. If the table has been waiting too long for a decision it decides for who is late (the hand
-   * stands, or no insurance), so a client that stays silent can never block the others. */
+  /** Time passes. If the table has been waiting too long for a decision it decides for who is late (no bet: the player sits out of the hand,
+   * no insurance: the hand stands), so a client that stays silent can never block the others. */
   override def onTick(): Unit =
     if deadline.exists(limit => !clock().isBefore(limit)) then decisionTimedOut()
 
   private def decisionTimedOut(): Unit = phase match
-    case Phase.Insurance(_, accepted) => recordInsuranceAnswers(Set.empty, accepted) // who has not answered declines
-    case Phase.Turn(hand)             => stand(hand)
+    case Phase.Betting => betTimedOut()
+    case Phase.Insurance(awaiting, accepted) =>
+      notifyTimedOut(seats.values.filter(seat => awaiting.contains(seat.player.name)), Decision.Insurance)
+      recordInsuranceAnswers(Set.empty, accepted) // who has not answered declines
+    case Phase.Turn(hand) =>
+      notifyTimedOut(seatOf(hand).toList, Decision.Action) // before the stand, so the client reads "time is up" first
+      stand(hand)
     case _                            => deadline = None
+
+  /** The time to bet is over: the hand starts with the players who have bet, and who has not sits it out
+   * (keeps the seat and the money, and is asked again at the next hand). If nobody has bet there is nothing
+   * to deal: a new round of bets begins. */
+  private def betTimedOut(): Unit =
+    notifyTimedOut(seats.values.filterNot(seat => hasBet(seat.player)), Decision.Bet)
+    if game.currentBets.isEmpty then startHand() else deal()
+
+  /** Tells the late players which of their decisions the table has taken for them. */
+  private def notifyTimedOut(late: Iterable[Seat], decision: Decision): Unit =
+    late.foreach(_.send(DecisionTimedOut(decision)))
 
   /** Moves the table to a new phase. The phases in which the table waits for a decision of the players get a
    * deadline: when it passes, [[onTick]] decides for who is late. */
   private def enter(next: Phase): Unit =
     phase = next
     deadline = next match
-      case Phase.Insurance(_, _) | Phase.Turn(_) => Some(clock().plusMillis(decisionTimeout.toMillis))
+      case Phase.Betting | Phase.Insurance(_, _) | Phase.Turn(_) => Some(clock().plusMillis(decisionTimeout.toMillis))
       case _                                     => None
 
   private def join(connection: Connection, name: String): Unit =
@@ -160,22 +176,24 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
   private def dealIfEveryoneHasBet(): Unit =
     if seats.values.forall(seat => hasBet(seat.player)) then deal()
 
-  /** Two cards to every player and to the dealer (the second one of the dealer face down).
+  /** Two cards to every player who has bet (a seated player without a bet sits out) and to the dealer
+   * (the second one of the dealer face down).
    * If the dealer shows an ace the insurance is offered, otherwise the players' turns begin at once.
    * TableView masks the dealer's face-down card: it never leaves the node. */
   private def deal(): Unit =
-    game.distributeCards()
+    game.distributeCards(game.players.filter(hasBet))
     game.handleBlackjacks(game.initialBlackjackPlayers()) // same as the local game: a blackjack does not play
     if game.dealerHasAce then offerInsurance() else startPlayersTurns()
 
   /** Every player, in turn order, who still has to play begins: the first one is asked for an action. */
   private def startPlayersTurns(): Unit = nextTurn(game.players.find(needsToPlay))
 
-  /** The dealer shows an ace: every seated player is offered the insurance and the table waits for all the answers. */
+  /** The dealer shows an ace: every player who bet is offered the insurance and the table waits for all the answers. */
   private def offerInsurance(): Unit =
-    enter(Phase.Insurance(awaiting = seats.values.map(_.player.name).toSet, accepted = List.empty))
+    val offered = seats.values.filter(seat => hasBet(seat.player))
+    enter(Phase.Insurance(awaiting = offered.map(_.player.name).toSet, accepted = List.empty))
     broadcastTable() // the clients must see their cards and the dealer's ace before they are asked
-    seats.values.foreach(_.send(InsuranceOffer))
+    offered.foreach(_.send(InsuranceOffer))
 
   private def answerInsurance(seat: Seat, accept: Boolean): Unit = phase match
     case Phase.Insurance(awaiting, accepted) if awaiting.contains(seat.player.name) =>
@@ -365,7 +383,7 @@ object TableHandler:
   val ActionNotAllowed = "This action is not allowed now"
   val NoInsuranceOffered = "No insurance is offered to you now"
 
-  /** How long the table waits for a decision (an action, the answer to the insurance offer) before deciding for the player. */
+  /** How long the table waits for a decision before deciding for the player. */
   val DefaultDecisionTimeout: FiniteDuration = 30.seconds
 
   /** The phases of a hand: the table moves from one to the next when the expected messages arrive. */

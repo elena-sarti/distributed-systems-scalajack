@@ -27,11 +27,14 @@ class ServerMessageTest extends AnyFunSuite:
     TableUpdate(table),
     HandResults(List("Alice" -> 125.0, "Bob" -> 90.0)),
     GameOver(List("Alice" -> 125.0)),
-    ErrorMessage("It is not your turn")
+    ErrorMessage("It is not your turn"),
+    DecisionTimedOut(Decision.Bet),
+    DecisionTimedOut(Decision.Insurance),
+    DecisionTimedOut(Decision.Action)
   )
 
   samples.foreach: message =>
-    test(s"${message.productPrefix} survives a JSON round-trip"):
+    test(s"$message survives a JSON round-trip"):
       MessageCodec.decodeServerMessage(MessageCodec.encode(message)) shouldBe Right(message)
 
   test("every kind of server message has a round-trip sample"):
