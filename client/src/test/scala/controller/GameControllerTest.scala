@@ -232,6 +232,8 @@ class GameControllerTest extends AnyFunSuite with BeforeAndAfterEach with Contro
     game.currentBets should contain(betP2)
 
   test("Insurance request should be skipped if dealer does not have an ace."):
+    // a deck without aces: with a random one the dealer could be dealt an ace face up
+    game = Game(List(player1, player2), deck = Deck.testDeck(List.fill(6)(StandardCard(Suit.Clubs, Value.Two))*))
     game.dealer.addCard(StandardCard(Suit.Hearts, Value.King))
     val simulatedInputs = Iterator(LowTestBet.toString, StandardBetAmount.toString, player1.name)
     given mockConsole: Console[IO] = mockConsoleWith(() => simulatedInputs.next())

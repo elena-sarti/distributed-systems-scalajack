@@ -161,6 +161,8 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     view.dealer.hiddenCards shouldBe 1
 
   test("the deal waits for the bet of every seated player"):
+    // a known deck: with a random one a blackjack could end the hand at once
+    table = tableWithDeck(List(Value.Ten, Value.Nine, Value.Eight, Value.Six, Value.Seven, Value.Five).map(card)*)
     val alice = join("Alice")
     val bob   = join("Bob")
     table.onMessage(alice, PlaceBet(10))
@@ -169,6 +171,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     lastTable(alice).dealer.visibleCards.size shouldBe 1
 
   test("a player who leaves during the betting is not waited for"):
+    table = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
     val alice = join("Alice")
     val bob   = join("Bob")
     table.onMessage(alice, PlaceBet(10))
@@ -176,6 +179,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     lastTable(alice).dealer.visibleCards.size shouldBe 1
 
   test("bets are refused once the cards are dealt"):
+    table = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
     val alice = join("Alice")
     table.onMessage(alice, PlaceBet(10))
     table.onMessage(alice, PlaceBet(10))
