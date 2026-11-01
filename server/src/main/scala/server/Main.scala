@@ -3,7 +3,7 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.db.{Database, DbConfig, PostgresUserRepository, SchemaMigrator}
+import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
 import scala.util.control.NonFatal
 
 object Main:
@@ -52,7 +52,7 @@ object Main:
     val hasher = Pbkdf2PasswordHasher()
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
-      LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, hasher, tokens))
+      LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, PostgresBalanceRepository(database), hasher, tokens))
     )
 
   private def fail(message: String): Nothing =

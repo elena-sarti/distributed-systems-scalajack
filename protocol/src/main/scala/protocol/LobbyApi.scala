@@ -27,9 +27,10 @@ object LobbyApi:
   final case class LoginRequest(username: String, password: String) derives ReadWriter:
     override def toString: String = s"LoginRequest($username,***)"
 
-  /** The token is shown to the tables to sit down; it expires after some hours. */
-  final case class LoggedIn(username: String, token: String) derives ReadWriter:
-    override def toString: String = s"LoggedIn($username,***)"
+  /** The token is shown to the tables to sit down; it expires after some hours.
+   * The balance is the one saved when the user last left a table. */
+  final case class LoggedIn(username: String, token: String, balance: Double) derives ReadWriter:
+    override def toString: String = s"LoggedIn($username,***,$balance)"
 
   /** A request that failed, with the reason (HTTP 4xx or 5xx). */
   final case class ApiError(reason: String) derives ReadWriter

@@ -8,12 +8,13 @@ class LoginServiceTest extends AnyFunSuite with BeforeAndAfterEach:
   private val tokens   = SessionTokens("a test secret that is long enough for HMAC".getBytes("UTF-8"))
   private val password = "very secret password"
 
+  var users: InMemoryUserRepository = _
   var service: LoginService = _
 
   override def beforeEach(): Unit =
-    val users = InMemoryUserRepository()
+    users = InMemoryUserRepository()
     RegistrationService(users, hasher).register("Alice", password)
-    service = LoginService(users, hasher, tokens)
+    service = LoginService(users, users, hasher, tokens)
 
   test("with the right password the user gets a session whose token tells who they are"):
     val session = service.login("Alice", password).get
@@ -32,3 +33,11 @@ class LoginServiceTest extends AnyFunSuite with BeforeAndAfterEach:
   test("a printed session does not show the token"):
     val session = service.login("Alice", password).get
     session.toString should not include session.token
+
+  test("a new user logs in with the initial balance"):
+    service.login("Alice", password).get.balance shouldBe 100.0
+
+  test("the balance saved when leaving a table is the one found at the next login"):
+    users.sitDown("Alice", "table-1")
+    users.standUp("Alice", "table-1", 137.5)
+    service.login("Alice", password).get.balance shouldBe 137.5

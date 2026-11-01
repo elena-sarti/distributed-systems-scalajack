@@ -30,3 +30,11 @@ class SchemaMigratorTest extends PostgresSuite:
     insertUser("Alice")
     val error = intercept[SQLException](insertUser("alice"))
     error.getSQLState shouldBe "23505" // PostgreSQL code for "unique violation"
+
+  test("on a database created before the balances, the migration adds them and keeps the users"):
+    execute("CREATE TABLE users (id BIGSERIAL PRIMARY KEY, username VARCHAR(32) NOT NULL, " +
+      "password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+    insertUser("Alice")
+    SchemaMigrator.migrate(database)
+    PostgresBalanceRepository(database).balanceOf("Alice") shouldBe Some(BalanceRepository.InitialBalance)
+    countUsers() shouldBe 1

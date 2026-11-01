@@ -11,7 +11,7 @@ final class LoginEndpoint(login: LoginService) extends JsonPostEndpoint("Login")
     LobbyApi.decode[LoginRequest](body) match
       case Left(_) => (400, json(ApiError(JsonPostEndpoint.Malformed)))
       case Right(request) => login.login(request.username, request.password) match
-        case Some(session) => (200, json(LoggedIn(session.username, session.token)))
+        case Some(session) => (200, json(LoggedIn(session.username, session.token, session.balance)))
         case None          => (401, json(ApiError(WrongCredentials)))
 
 object LoginEndpoint:

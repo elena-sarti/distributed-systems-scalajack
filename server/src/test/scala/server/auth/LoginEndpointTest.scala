@@ -4,7 +4,7 @@ import utils.TestExports.*
 import protocol.LobbyApi
 import protocol.LobbyApi.{LoggedIn, LoginRequest}
 import server.auth.TestLobby.{capturedOutput, reason}
-import server.db.UserRepository
+import server.db.{BalanceRepository, UserRepository}
 
 class LoginEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
 
@@ -17,12 +17,12 @@ class LoginEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
   override def beforeEach(): Unit =
     val users = InMemoryUserRepository()
     RegistrationService(users, hasher).register("Alice", password)
-    lobby = lobbyWith(users)
+    lobby = lobbyWith(users, users)
 
   override def afterEach(): Unit = lobby.stop()
 
-  private def lobbyWith(users: UserRepository): TestLobby =
-    TestLobby(Map(LobbyApi.LoginPath -> LoginEndpoint(LoginService(users, hasher, tokens))))
+  private def lobbyWith(users: UserRepository, balances: BalanceRepository): TestLobby =
+    TestLobby(Map(LobbyApi.LoginPath -> LoginEndpoint(LoginService(users, balances, hasher, tokens))))
 
   private def login(username: String, password: String, on: TestLobby = lobby) =
     on.post(LobbyApi.LoginPath, LobbyApi.encode(LoginRequest(username, password)))
@@ -32,6 +32,7 @@ class LoginEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
     response.statusCode() shouldBe 200
     val answer = LobbyApi.decode[LoggedIn](response.body()).toOption.get
     answer.username shouldBe "Alice"
+    answer.balance shouldBe 100.0
     tokens.verify(answer.token) shouldBe Some("Alice")
 
   test("a wrong password and an unknown user get the same 401"):
@@ -47,12 +48,12 @@ class LoginEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
     reason(response) shouldBe JsonPostEndpoint.Malformed
 
   test("if the database is down the client gets 500"):
-    val broken = lobbyWith(BrokenRepository)
+    val broken = lobbyWith(BrokenRepository, BrokenBalances)
     try login("Alice", password, broken).statusCode() shouldBe 500
     finally broken.stop()
 
   test("neither the password nor the token appear in the logs"):
-    val broken = lobbyWith(BrokenRepository)
+    val broken = lobbyWith(BrokenRepository, BrokenBalances)
     var token = ""
     val log = capturedOutput:
       try
