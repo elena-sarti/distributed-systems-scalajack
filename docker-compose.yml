@@ -26,6 +26,9 @@ services:
       DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}   # "db" is the name of the service: Compose resolves it
       DB_USER: ${POSTGRES_USER:-scalajack}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      # signs the session tokens: lobby and tables must share it. The default is only for local runs,
+      # a real deployment sets its own in .env
+      SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
     ports:
       - "9080:8080"
     depends_on: # only the lobby depends on the db

@@ -2,7 +2,7 @@ package server
 
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
-import server.auth.{Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService}
+import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
 import server.db.{Database, DbConfig, PostgresUserRepository, SchemaMigrator}
 import scala.util.control.NonFatal
 
@@ -12,7 +12,7 @@ object Main:
       case Left(error) => fail(s"Invalid configuration: $error") //fail fast: if the configuration is wrong, the process just fails
       case Right(config) =>
         // the lobby owns the users: their table must exist before the node accepts anything
-        val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase()) else Map.empty
+        val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), sessionTokens()) else Map.empty
         val health = HealthServer(config.role, config.port, routes)
         // a table node runs one table: its logic is driven by a single writer thread
         val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(TableHandler()))
@@ -41,10 +41,18 @@ object Main:
           database
         catch case NonFatal(error) => fail(s"Cannot prepare the database: ${error.getMessage}")
 
-  /** The HTTP API of the lobby, next to /health: for now the registration of new users. */
-  private def lobbyRoutes(database: Database): Map[String, HttpHandler] =
-    val registration = RegistrationService(PostgresUserRepository(database), Pbkdf2PasswordHasher())
-    Map(LobbyApi.RegisterPath -> RegistrationEndpoint(registration))
+  /** The tokens are signed with a secret shared by lobby and tables: a node without it cannot work. */
+  private def sessionTokens(): SessionTokens =
+    SessionTokens.fromEnv(sys.env).fold(error => fail(s"Invalid session configuration: $error"), identity)
+
+  /** The HTTP API of the lobby, next to /health. */
+  private def lobbyRoutes(database: Database, tokens: SessionTokens): Map[String, HttpHandler] =
+    val users  = PostgresUserRepository(database)
+    val hasher = Pbkdf2PasswordHasher()
+    Map(
+      LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
+      LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, hasher, tokens))
+    )
 
   private def fail(message: String): Nothing =
     System.err.println(message)

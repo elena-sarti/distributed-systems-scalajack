@@ -7,9 +7,7 @@ import javax.crypto.spec.PBEKeySpec
 import scala.util.Try
 
 /** Turns a password into what is stored in the database, and checks a password against it.
- *
- * Registration (D2) and login (D3) depend on this trait, so the algorithm can change in one place
- * and their tests can use a fast hasher. */
+ * Registration and login only know this trait, so their tests can use a fast hasher. */
 trait PasswordHasher:
   /** A salted hash of the password: the password itself cannot be read back from it. */
   def hash(password: String): String

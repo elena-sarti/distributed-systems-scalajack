@@ -5,7 +5,7 @@ import server.auth.RegistrationError.*
 
 class RegistrationServiceTest extends AnyFunSuite with BeforeAndAfterEach:
 
-  private val hasher   = Pbkdf2PasswordHasher(iterations = 1_000) 
+  private val hasher   = Pbkdf2PasswordHasher(iterations = 1_000) // fast: the strength is tested elsewhere
   private val password = "very secret password"
 
   var users: InMemoryUserRepository = _

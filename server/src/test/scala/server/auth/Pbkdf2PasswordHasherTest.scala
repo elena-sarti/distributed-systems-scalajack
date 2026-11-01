@@ -3,7 +3,8 @@ package server.auth
 import utils.TestExports.*
 
 class Pbkdf2PasswordHasherTest extends AnyFunSuite:
-  
+
+  // few iterations: the tests check the behaviour, not the strength, and must stay fast
   private val hasher   = Pbkdf2PasswordHasher(iterations = 1_000)
   private val password = "correct horse battery staple"
 
