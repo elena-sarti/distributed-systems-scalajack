@@ -1,11 +1,22 @@
 package server
 
-import com.sun.net.httpserver.HttpServer
+import com.sun.net.httpserver.{HttpHandler, HttpServer}
 import java.net.InetSocketAddress
+import java.util.concurrent.Executors
 
-/** Minimal liveness endpoint, based on the JDK's built-in HTTP server (no extra dependencies). */
-final class HealthServer(role: NodeRole, port: Int):
+/** The HTTP server of a node, based on the JDK's built-in HTTP server (no extra dependencies).
+ * Every node answers `/health`; a node may add the routes of its role (e.g. `/register` on the lobby).
+ *
+ * @param routes the extra paths served by this node, with their handlers.
+ */
+final class HealthServer(role: NodeRole, port: Int, routes: Map[String, HttpHandler] = Map.empty):
   private val http = HttpServer.create(InetSocketAddress(port), 0)
+
+  // By default the JDK server handles one request at a time on its own thread: a slow request
+  // (hashing a password takes 0.2 s) would delay all the others, /health included. A small pool
+  // serves them in parallel; the handlers are thread-safe.
+  private val workers = Executors.newFixedThreadPool(HealthServer.WorkerThreads)
+  http.setExecutor(workers)
 
   http.createContext("/health", exchange =>
     val body = s"""{"status":"UP","role":"${role.toString.toLowerCase}"}""".getBytes("UTF-8")
@@ -14,7 +25,13 @@ final class HealthServer(role: NodeRole, port: Int):
     exchange.getResponseBody.write(body)
     exchange.close()
   )
+  routes.foreach((path, handler) => http.createContext(path, handler))
 
-  def start(): Unit    = http.start()
-  def stop(): Unit     = http.stop(0)
-  def boundPort: Int   = http.getAddress.getPort
+  def start(): Unit = http.start()
+  def stop(): Unit =
+    http.stop(0)
+    workers.shutdown()
+  def boundPort: Int = http.getAddress.getPort
+
+object HealthServer:
+  private val WorkerThreads = 4

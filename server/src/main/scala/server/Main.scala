@@ -1,6 +1,9 @@
 package server
 
-import server.db.{Database, DbConfig, SchemaMigrator}
+import com.sun.net.httpserver.HttpHandler
+import protocol.LobbyApi
+import server.auth.{Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService}
+import server.db.{Database, DbConfig, PostgresUserRepository, SchemaMigrator}
 import scala.util.control.NonFatal
 
 object Main:
@@ -9,8 +12,8 @@ object Main:
       case Left(error) => fail(s"Invalid configuration: $error") //fail fast: if the configuration is wrong, the process just fails
       case Right(config) =>
         // the lobby owns the users: their table must exist before the node accepts anything
-        if config.role == NodeRole.Lobby then prepareDatabase()
-        val health = HealthServer(config.role, config.port)
+        val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase()) else Map.empty
+        val health = HealthServer(config.role, config.port, routes)
         // a table node runs one table: its logic is driven by a single writer thread
         val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(TableHandler()))
         val endpoint = table.map(TableEndpoint(config.wsPort, _))
@@ -27,14 +30,21 @@ object Main:
 
   /** Reads the database configuration and brings the schema up to date. As for the node configuration, a
    * wrong configuration or a database that cannot be reached stops the process: no point in running without users. */
-  private def prepareDatabase(): Unit =
+  private def prepareDatabase(): Database =
     DbConfig.fromEnv(sys.env) match
       case Left(error) => fail(s"Invalid database configuration: $error")
       case Right(dbConfig) =>
+        val database = Database(dbConfig)
         try
-          SchemaMigrator.migrate(Database(dbConfig))
+          SchemaMigrator.migrate(database)
           println("Database schema is up to date")
+          database
         catch case NonFatal(error) => fail(s"Cannot prepare the database: ${error.getMessage}")
+
+  /** The HTTP API of the lobby, next to /health: for now the registration of new users. */
+  private def lobbyRoutes(database: Database): Map[String, HttpHandler] =
+    val registration = RegistrationService(PostgresUserRepository(database), Pbkdf2PasswordHasher())
+    Map(LobbyApi.RegisterPath -> RegistrationEndpoint(registration))
 
   private def fail(message: String): Nothing =
     System.err.println(message)
