@@ -23,6 +23,9 @@ services:
     build: . # the only service that builds the image
     environment:
       NODE_ROLE: lobby
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}   # "db" is the name of the service: Compose resolves it
+      DB_USER: ${POSTGRES_USER:-scalajack}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
       - "9080:8080"
     depends_on: # only the lobby depends on the db

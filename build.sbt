@@ -30,7 +30,10 @@ lazy val server = project
     commonTestDeps,
     libraryDependencies ++= Seq(
       "org.java-websocket" % "Java-WebSocket" % "1.6.0",
-      "org.slf4j"          % "slf4j-simple"   % "2.0.13" // log backend, otherwise the library's logs are dropped
+      "org.slf4j"          % "slf4j-simple"   % "2.0.13", // log backend, otherwise the library's logs are dropped
+      "org.postgresql"     % "postgresql"     % "42.7.4", // JDBC driver: how the lobby talks to PostgreSQL
+      // a real PostgreSQL started inside the test JVM, so the database tests need neither Docker nor a manual setup
+      "io.zonky.test"      % "embedded-postgres" % "2.0.7" % Test
     ),
     Compile / mainClass := Some("server.Main"),
     assembly / assemblyJarName := "scalajack-server.jar",
