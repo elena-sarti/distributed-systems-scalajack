@@ -11,12 +11,13 @@ object Main:
     NodeConfig.fromEnv(sys.env) match
       case Left(error) => fail(s"Invalid configuration: $error") //fail fast: if the configuration is wrong, the process just fails
       case Right(config) =>
+        val tokens = sessionTokens() // the lobby issues the session tokens, the tables check them
         // the lobby owns the users: their table must exist before the node accepts anything
-        val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), sessionTokens()) else Map.empty
+        val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), tokens) else Map.empty
         val health = HealthServer(config.role, config.port, routes)
         // a table node runs one table: its logic is driven by a single writer thread
         val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(TableHandler()))
-        val endpoint = table.map(TableEndpoint(config.wsPort, _))
+        val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
         sys.addShutdownHook:
           endpoint.foreach(_.stop()) // first stop the network, so no new events arrive...
           table.foreach(_.stop())    // ...then let the table finish the events already queued

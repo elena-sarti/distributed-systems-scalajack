@@ -5,8 +5,12 @@ import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
 import java.util.concurrent.{CompletionStage, CountDownLatch, LinkedBlockingQueue, TimeUnit}
 
-/** Minimal WebSocket client for tests, based on the JDK's built-in client. */
-final class TestWsClient(uri: URI):
+/** Minimal WebSocket client for tests, based on the JDK's built-in client.
+ *
+ * @param token the session token sent in the handshake, if any. Without a valid one the table refuses
+ *              the connection and the constructor throws.
+ */
+final class TestWsClient(uri: URI, token: Option[String] = None):
   private val inbox   = LinkedBlockingQueue[String]()
   private val closed  = CountDownLatch(1)
   private val partial = StringBuilder() // a text message may arrive split in several fragments
@@ -26,7 +30,9 @@ final class TestWsClient(uri: URI):
     override def onError(ws: WebSocket, error: Throwable): Unit = closed.countDown()
 
   private val socket: WebSocket =
-    TestWsClient.http.newWebSocketBuilder().buildAsync(uri, listener).get(5, TimeUnit.SECONDS)
+    val builder = TestWsClient.http.newWebSocketBuilder()
+    token.foreach(t => builder.header("Authorization", s"Bearer $t"))
+    builder.buildAsync(uri, listener).get(5, TimeUnit.SECONDS)
 
   def send(message: ClientMessage): Unit = sendRaw(MessageCodec.encode(message))
   def sendRaw(text: String): Unit        = socket.sendText(text, true).get(5, TimeUnit.SECONDS)

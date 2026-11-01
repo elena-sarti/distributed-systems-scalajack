@@ -2,10 +2,10 @@ package server
 
 import utils.TestExports.*
 import utils.ModelExports.{Deck, Game, StandardCard, Suit, Value}
+import server.TestTokens.{connectAs, tokens}
 import protocol.{MessageCodec, ServerMessage}
 import protocol.ClientMessage.{JoinTable, PlaceBet, Stand}
 import protocol.ServerMessage.*
-import java.net.URI
 import java.util.concurrent.CountDownLatch
 import scala.collection.mutable.ListBuffer
 
@@ -16,19 +16,16 @@ class TableNodeTest extends AnyFunSuite:
 
   private def withTableNodeOf(handler: TableHandler)(body: TableEndpoint => Unit): Unit =
     val table    = SingleWriterHandler(handler)
-    val endpoint = TableEndpoint(0, table) // port 0: a free port chosen by the OS
+    val endpoint = TableEndpoint(0, table, tokens) // port 0: a free port chosen by the OS
     endpoint.start()
     try body(endpoint)
     finally
       endpoint.stop()
       table.stop()
 
-  private def connect(endpoint: TableEndpoint): TestWsClient =
-    TestWsClient(URI.create(s"ws://localhost:${endpoint.boundPort}"))
-
   test("a client joins a running table over WebSocket and sees the table"):
     withTableNode: endpoint =>
-      val alice = connect(endpoint)
+      val alice = connectAs("Alice", endpoint)
       alice.send(JoinTable("Alice"))
       alice.receive() shouldBe JoinAccepted("Alice", TableHandler.DefaultBalance)
       alice.receive() match
@@ -37,7 +34,7 @@ class TableNodeTest extends AnyFunSuite:
 
   test("two clients asking for the same name at the same moment: exactly one gets it"):
     withTableNode: endpoint =>
-      val clients = List(connect(endpoint), connect(endpoint))
+      val clients = List(connectAs("Alice", endpoint), connectAs("Alice", endpoint)) // the same user, twice
       val start   = CountDownLatch(1)
       val senders = clients.map(client => Thread(() => { start.await(); client.send(JoinTable("Alice")) }))
       senders.foreach(_.start())
@@ -66,7 +63,7 @@ class TableNodeTest extends AnyFunSuite:
       StandardCard(Suit.Hearts, Value.Ten), StandardCard(Suit.Hearts, Value.Nine), StandardCard(Suit.Diamonds, Value.Nine),
       StandardCard(Suit.Hearts, Value.Six), StandardCard(Suit.Diamonds, Value.Seven), StandardCard(Suit.Clubs, Value.King))
     withTableNodeOf(TableHandler(newGame = () => Game(List.empty, deck))): endpoint =>
-      val (alice, bob) = (connect(endpoint), connect(endpoint))
+      val (alice, bob) = (connectAs("Alice", endpoint), connectAs("Bob", endpoint))
       val (aliceFrames, bobFrames) = (ListBuffer[String](), ListBuffer[String]())
       alice.send(JoinTable("Alice"))
       readUntil(alice, aliceFrames)(_.isInstanceOf[BetRequest])

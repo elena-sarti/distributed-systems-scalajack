@@ -1,10 +1,13 @@
 package server
 
 import org.java_websocket.WebSocket
-import org.java_websocket.exceptions.WebsocketNotConnectedException
-import org.java_websocket.handshake.ClientHandshake
+import org.java_websocket.drafts.Draft
+import org.java_websocket.exceptions.{InvalidDataException, WebsocketNotConnectedException}
+import org.java_websocket.framing.CloseFrame
+import org.java_websocket.handshake.{ClientHandshake, ServerHandshakeBuilder}
 import org.java_websocket.server.WebSocketServer
-import protocol.{MessageCodec, ServerMessage}
+import protocol.{ClientMessage, MessageCodec, ServerMessage}
+import server.auth.SessionTokens
 import java.net.InetSocketAddress
 import java.util.UUID
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, TimeUnit}
@@ -12,13 +15,18 @@ import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, TimeUnit}
 /** WebSocket transport of a table node: accepts connections, turns every text frame into a
  * [[protocol.ClientMessage]] and hands it to the [[SessionHandler]]. It knows nothing about the game.
  *
+ * Only logged-in users get in: the opening handshake must carry `Authorization: Bearer <token>` with a
+ * session token issued by the lobby, otherwise the connection is refused before it is opened. Each
+ * connection then speaks for that user only, so a client cannot sit down under somebody else's name.
+ *
  * @param port    the port to listen on (0 = a free port chosen by the OS, see [[boundPort]]).
  * @param handler the table logic that reacts to connections and messages.
+ * @param tokens  checks the session tokens (with the secret shared with the lobby).
  */
-final class TableEndpoint(port: Int, handler: SessionHandler):
+final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTokens):
   import TableEndpoint.*
 
-  private val connections = ConcurrentHashMap[WebSocket, Connection]()
+  private val connections = ConcurrentHashMap[WebSocket, WsConnection]()
   private val started     = CountDownLatch(1)
   @volatile private var startupError: Option[Exception] = None
   private val server = Server()
@@ -51,14 +59,25 @@ final class TableEndpoint(port: Int, handler: SessionHandler):
 
     override def onStart(): Unit = started.countDown()
 
+    /** Runs before the connection is opened: without a valid token the handshake fails and the
+     * handler never hears of the client. The user is remembered on the socket for [[onOpen]]. */
+    override def onWebsocketHandshakeReceivedAsServer(socket: WebSocket, draft: Draft,
+                                                      request: ClientHandshake): ServerHandshakeBuilder =
+      val user = bearerToken(request.getFieldValue("Authorization")).flatMap(tokens.verify)
+        .getOrElse(throw InvalidDataException(CloseFrame.POLICY_VALIDATION, NotLoggedIn))
+      socket.setAttachment(user)
+      super.onWebsocketHandshakeReceivedAsServer(socket, draft, request)
+
     override def onOpen(socket: WebSocket, handshake: ClientHandshake): Unit =
-      val connection = WsConnection(socket)
+      val connection = WsConnection(socket, socket.getAttachment[String]())
       connections.put(socket, connection) // registered before the handler is told
       handler.onConnected(connection)
 
     override def onMessage(socket: WebSocket, text: String): Unit =
       Option(connections.get(socket)).foreach: connection =>
         MessageCodec.decodeClientMessage(text) match
+          case Right(ClientMessage.JoinTable(name)) if name != connection.user =>
+            connection.send(ServerMessage.JoinRejected(NotYourName))
           case Right(message) => handler.onMessage(connection, message)
           case Left(reason)   => connection.send(ServerMessage.ErrorMessage(reason))
 
@@ -73,10 +92,17 @@ final class TableEndpoint(port: Int, handler: SessionHandler):
       else System.err.println(s"WebSocket error: ${error.getMessage}")
 
 object TableEndpoint:
+  val NotLoggedIn = "A valid session token is needed to sit at a table: log in to the lobby first"
+  val NotYourName = "You can only sit down with the username you logged in with"
+
   private val StartTimeoutSeconds = 5L
   private val StopTimeoutMillis   = 1000
 
-  private final class WsConnection(socket: WebSocket) extends Connection:
+  private def bearerToken(header: String): Option[String] =
+    Option(header).map(_.trim).filter(_.startsWith("Bearer ")).map(_.stripPrefix("Bearer ").trim).filter(_.nonEmpty)
+
+  /** @param user the logged-in user the connection speaks for. */
+  private final class WsConnection(socket: WebSocket, val user: String) extends Connection:
     val id: String = UUID.randomUUID().toString
     def send(message: ServerMessage): Unit =
       try socket.send(MessageCodec.encode(message))

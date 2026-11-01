@@ -3,19 +3,25 @@ package server
 import utils.TestExports.*
 import protocol.{ClientMessage, ServerMessage}
 import server.TestSupport.next
+import server.TestTokens.{connectAs, tokens}
+import server.auth.SessionTokens
 import java.net.URI
-import java.util.concurrent.TimeUnit
+import java.time.Instant
+import java.util.concurrent.{ExecutionException, TimeUnit}
 
 class TableEndpointTest extends AnyFunSuite:
 
   private def withEndpoint(handler: SessionHandler)(body: TableEndpoint => Unit): Unit =
-    val endpoint = TableEndpoint(0, handler) // port 0: a free port chosen by the OS
+    val endpoint = TableEndpoint(0, handler, tokens) // port 0: a free port chosen by the OS
     endpoint.start()
     try body(endpoint)
     finally endpoint.stop()
 
-  private def connect(endpoint: TableEndpoint): TestWsClient =
-    TestWsClient(URI.create(s"ws://localhost:${endpoint.boundPort}"))
+  private def connect(endpoint: TableEndpoint): TestWsClient = connectAs("Alice", endpoint)
+
+  /** Tries to connect with the given token (or none): the handshake must be refused. */
+  private def refused(endpoint: TableEndpoint, token: Option[String]): Unit =
+    intercept[ExecutionException](TestWsClient(URI.create(s"ws://localhost:${endpoint.boundPort}"), token))
 
   test("a client can connect and the handler is notified"):
     val handler = RecordingHandler()
@@ -98,6 +104,34 @@ class TableEndpointTest extends AnyFunSuite:
 
   test("starting on a port that is already in use fails"):
     withEndpoint(RecordingHandler()): first =>
-      val second = TableEndpoint(first.boundPort, RecordingHandler())
+      val second = TableEndpoint(first.boundPort, RecordingHandler(), tokens)
       try intercept[IllegalStateException](second.start())
       finally second.stop()
+
+  test("a client without a session token is refused and the handler never hears of it"):
+    val handler = RecordingHandler()
+    withEndpoint(handler): endpoint =>
+      refused(endpoint, token = None)
+      handler.connected.poll(300, TimeUnit.MILLISECONDS) shouldBe null
+      endpoint.connectionCount shouldBe 0
+
+  test("a token that is not genuine is refused"):
+    val forger = SessionTokens("a secret that the tables do not know at all".getBytes("UTF-8"))
+    withEndpoint(RecordingHandler()): endpoint =>
+      refused(endpoint, Some(forger.issue("Alice")))
+      refused(endpoint, Some("not-a-token"))
+      endpoint.connectionCount shouldBe 0
+
+  test("an expired token is refused"):
+    val yesterday = SessionTokens("the secret shared by the test lobby and tables".getBytes("UTF-8"),
+      clock = () => Instant.now().minusSeconds(24 * 3600))
+    withEndpoint(RecordingHandler()): endpoint =>
+      refused(endpoint, Some(yesterday.issue("Alice")))
+
+  test("a client cannot sit down with a name other than its own"):
+    val handler = RecordingHandler()
+    withEndpoint(handler): endpoint =>
+      val alice = connectAs("Alice", endpoint)
+      alice.send(ClientMessage.JoinTable("Bob"))
+      alice.receive() shouldBe ServerMessage.JoinRejected(TableEndpoint.NotYourName)
+      handler.received.poll(300, TimeUnit.MILLISECONDS) shouldBe null
