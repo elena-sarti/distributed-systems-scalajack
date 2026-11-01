@@ -388,6 +388,59 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.last shouldBe GameOver(List(("Alice", DefaultBalance - 10)))
     join("Alice", dealt).inbox.head shouldBe JoinAccepted("Alice", DefaultBalance) // a new game for new players
 
+  // ---- C6: the seats released by a voluntary exit or by the end of the game are free at once ----
+
+  /** Fills every seat of `at`: Player1, Player2, ... */
+  private def fillTable(at: TableHandler = table): List[FakeConnection] =
+    (1 to Game.MaxPlayersNum).toList.map(i => join(s"Player$i", at))
+
+  test("an empty table has every seat free and each player who sits down takes one"):
+    table.freeSeats shouldBe Game.MaxPlayersNum
+    join("Alice")
+    table.freeSeats shouldBe Game.MaxPlayersNum - 1
+
+  test("a player who is refused does not take a seat"):
+    join("Alice")
+    join("Alice") // name already taken
+    table.freeSeats shouldBe Game.MaxPlayersNum - 1
+
+  test("a player who leaves a full table frees the seat and a newcomer can take it at once"):
+    val players = fillTable()
+    table.freeSeats shouldBe 0
+    table.onMessage(players.head, LeaveTable)
+    table.freeSeats shouldBe 1
+    join("Late").inbox.head shouldBe JoinAccepted("Late", DefaultBalance)
+    table.freeSeats shouldBe 0
+
+  test("a player who leaves in the middle of a hand frees the seat without waiting for the end of the hand"):
+    val (dealt, _, bob) = aliceAndBobDealt() // it is Alice's turn
+    dealt.freeSeats shouldBe Game.MaxPlayersNum - 2
+    dealt.onMessage(bob, LeaveTable)
+    dealt.freeSeats shouldBe Game.MaxPlayersNum - 1
+    join("Carol", dealt).inbox.head shouldBe JoinAccepted("Carol", DefaultBalance)
+
+  test("a player left without money frees the seat"):
+    val dealt = tableWithDeck(List(Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two).map(card)*)
+    val alice = join("Alice", dealt)
+    dealt.onMessage(alice, PlaceBet(100)) // the whole balance
+    dealt.onMessage(alice, Stand)
+    dealt.freeSeats shouldBe Game.MaxPlayersNum
+
+  test("when the cut card comes out every player is told the game is over and every seat is free again"):
+    // Alice 10+6 and Bob 9+7 stand; the dealer has 8+5, skips the cut card and draws a two and a three (18)
+    val newGame = () => Game(List.empty, Deck.testDeck(card(Value.Ten), card(Value.Nine), card(Value.Eight),
+      card(Value.Six), card(Value.Seven), card(Value.Five), CutCard, card(Value.Two), card(Value.Three), card(Value.Five)))
+    val dealt = TableHandler(newGame = newGame)
+    val alice = join("Alice", dealt)
+    val bob   = join("Bob", dealt)
+    List(alice, bob).foreach(dealt.onMessage(_, PlaceBet(10)))
+    dealt.onMessage(alice, Stand)
+    dealt.onMessage(bob, Stand)
+    alice.inbox.last shouldBe GameOver(List(("Alice", DefaultBalance - 10)))
+    bob.inbox.last shouldBe GameOver(List(("Bob", DefaultBalance - 10)))
+    dealt.freeSeats shouldBe Game.MaxPlayersNum
+    fillTable(dealt).foreach(_.inbox.head shouldBe a[JoinAccepted]) // the whole table is available again
+
   /** Every table snapshot received by the client, in order. */
   private def updates(connection: FakeConnection): List[TableView] =
     connection.inbox.toList.collect { case TableUpdate(view) => view }

@@ -2,12 +2,15 @@ package server
 
 import utils.TestExports.*
 import protocol.{ClientMessage, ServerMessage}
+import utils.ModelExports.Game
+import org.scalatest.concurrent.Eventually
+import org.scalatest.time.{Seconds, Span}
 import server.TestSupport.next
 import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration.*
 
-class SingleWriterHandlerTest extends AnyFunSuite:
+class SingleWriterHandlerTest extends AnyFunSuite with Eventually:
 
   private val connection = new Connection:
     val id = "test"
@@ -136,3 +139,13 @@ class SingleWriterHandlerTest extends AnyFunSuite:
     (1 to 20).foreach(i => writer.onMessage(connection, ClientMessage.PlaceBet(i)))
     writer.stop() // runs the messages already queued, then waits for the writer to finish
     overlaps.get shouldBe 0
+
+  test("the free seats of a table can be read from another thread as soon as the writer releases a seat"):
+    val tableLogic = TableHandler()
+    withWriter(tableLogic): writer =>
+      writer.onMessage(connection, ClientMessage.JoinTable("Alice"))
+      eventually(timeout(Span(5, Seconds))):
+        tableLogic.freeSeats shouldBe Game.MaxPlayersNum - 1
+      writer.onMessage(connection, ClientMessage.LeaveTable)
+      eventually(timeout(Span(5, Seconds))):
+        tableLogic.freeSeats shouldBe Game.MaxPlayersNum

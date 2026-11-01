@@ -24,13 +24,29 @@ import scala.concurrent.duration.*
 final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
                          newGame: () => Game = () => Game(List.empty),
                          clock: () => Instant = () => Instant.now(),
-                         decisionTimeout: FiniteDuration = TableHandler.DefaultDecisionTimeout) extends SessionHandler:
+                         decisionTimeout: FiniteDuration = TableHandler.DefaultDecisionTimeout) extends SessionHandler, SeatAvailability:
   import TableHandler.*
 
   private var game = newGame()
 
-  /** The seated players, by connection id. */
-  private var seats = Map.empty[String, Seat]
+  /** The seated players, by connection id. Written only by the single writer thread, always through the
+   * `seats` setter below, so that the published number of free seats can never be out of date. */
+  private var seatsById = Map.empty[String, Seat]
+
+  /** Free seats, published for the threads that are not the writer (e.g. the dispatcher).
+   * Volatile: a seat freed by the writer is visible to the readers immediately. */
+  @volatile private var publishedFreeSeats = Game.MaxPlayersNum
+
+  private def seats: Map[String, Seat] = seatsById
+
+  /** Every change of the seats (a player sits down, leaves, is removed, the table restarts) ends up here:
+   * a single place where the free seats are updated (DRY), so a released seat is available at once. */
+  private def seats_=(next: Map[String, Seat]): Unit =
+    seatsById = next
+    publishedFreeSeats = Game.MaxPlayersNum - next.size
+
+  /** How many players can still sit down. Safe to call from any thread. */
+  def freeSeats: Int = publishedFreeSeats
 
   /** Where the current hand is. */
   private var phase: Phase = Phase.Idle

@@ -40,5 +40,6 @@ enum ClientMessage derives ReadWriter:
    */
   case AnswerInsurance(accept: Boolean)
 
-  /** The player voluntarily leaves the table; the seat is released at the end of the hand. */
+  /** The player voluntarily leaves the table. The seat is released at once, even in the middle of a hand:
+   * the player's hands are taken away, a bet already placed is lost and the table never waits for them again. */
   case LeaveTable
