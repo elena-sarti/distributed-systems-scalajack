@@ -2,9 +2,16 @@ x-backend: &backend
   image: scalajack-backend
   pull_policy: never   # the image is built locally, never downloaded
 
-# Signs the session tokens: the lobby and every table must have the same one, so it is written once here.
-# The default is only for local runs: a real deployment sets its own SESSION_SECRET in .env.
-x-session-secret: &session-secret ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
+# What the lobby and the tables have in common: the database (the users and their balances) and the
+# secret that signs the session tokens. Written once, so the nodes cannot end up with different values.
+x-node-environment: &node-environment
+  # "db" is the name of the service: Compose resolves it. The timeouts keep a node from waiting forever
+  # for a database that does not answer.
+  DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}?connectTimeout=5&socketTimeout=10
+  DB_USER: ${POSTGRES_USER:-scalajack}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  # the default is only for local runs: a real deployment sets its own SESSION_SECRET in .env
+  SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
 
 
 services:
@@ -26,25 +33,26 @@ services:
     <<: *backend
     build: . # the only service that builds the image
     environment:
+      <<: *node-environment
       NODE_ROLE: lobby
-      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}   # "db" is the name of the service: Compose resolves it
-      DB_USER: ${POSTGRES_USER:-scalajack}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      SESSION_SECRET: *session-secret
     ports:
       - "9080:8080"
-    depends_on: # only the lobby depends on the db
+    depends_on:
       db:
         condition: service_healthy
 
   table-1:
     <<: *backend
     environment:
+      <<: *node-environment
       NODE_ROLE: table
-      SESSION_SECRET: *session-secret
+      TABLE_ID: table-1   # marks in the database the players sitting here: it must not change between restarts
     ports:
       - "9081:8080"   # health (HTTP)
       - "9091:8090"   # WebSocket
+    depends_on:       # the balances are in the database
+      db:
+        condition: service_healthy
 
 volumes:
   db-data:

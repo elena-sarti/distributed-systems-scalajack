@@ -17,6 +17,10 @@ trait SessionHandler:
    * can react to the passing of time (e.g. a player who does not answer). By default nothing happens. */
   def onTick(): Unit = ()
 
+  /** Called once when the node shuts down, by the single writer, after the events already queued:
+   * the last chance to save what must not be lost. By default nothing happens. */
+  def onStop(): Unit = ()
+
 /** What a dispatcher needs to know about a table: how many seats are free right now.
  *
  * It is a separate trait (and not part of [[SessionHandler]]) because the two have different users:

@@ -15,13 +15,13 @@ import scala.concurrent.duration.*
  * NOT thread-safe on purpose: it must be driven by a [[SingleWriterHandler]], so that it is only
  * ever called by one thread and can use plain mutable state.
  *
- * @param initialBalance  the balance given to a player when sitting down.
+ * @param cashier         gives the balance of a player who sits down, and takes it back when they leave.
  * @param newGame         creates the game of the table (tests pass a game with a known deck).
  * @param clock           the current time (tests pass a clock that they move by hand).
  * @param decisionTimeout how long the table waits for a decision of the players (a bet, an action, the answer to
  *                        the insurance offer) before deciding for who is late.
  */
-final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
+final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.DefaultBalance),
                          newGame: () => Game = () => Game(List.empty),
                          clock: () => Instant = () => Instant.now(),
                          decisionTimeout: FiniteDuration = TableHandler.DefaultDecisionTimeout) extends SessionHandler, SeatAvailability:
@@ -127,13 +127,16 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
       case _                                     => None
 
   private def join(connection: Connection, name: String): Unit =
-    rejectionReason(name) match
-      case Some(reason) => connection.send(JoinRejected(reason))
-      case None =>
-        val seat = Seat(connection, NormalPlayer(name, initialBalance))
+    rejectionReason(name).toLeft(()).flatMap(_ => cashier.sitDown(name)) match
+      case Left(reason) => connection.send(JoinRejected(reason))
+      case Right(balance) if balance < Game.MinGameBet =>
+        cashier.standUp(name, balance) // the money stays where it was
+        connection.send(JoinRejected(NotEnoughMoney))
+      case Right(balance) =>
+        val seat = Seat(connection, NormalPlayer(name, balance))
         game.addPlayer(seat.player)
         seats = seats + (connection.id -> seat)
-        seat.send(JoinAccepted(name, initialBalance))
+        seat.send(JoinAccepted(name, balance))
         broadcastTable()
         phase match
           case Phase.Idle    => startHand()
@@ -152,9 +155,11 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     val next = phase match // computed while the hands are still in the turn order
       case Phase.Turn(current) if hands.contains(current) => nextToPlay(after = current, excluding = hands)
       case _                                              => None
+    val money = hands.map(_.balance.totalValue).sum // after a split part of it may be on the other hands
     game.removeLeavingPlayers(hands)
     game.currentBets = game.currentBets.filterNot(bet => hands.contains(bet.player)) // a bet left on the table is lost
     seats = seats - seat.connection.id
+    standUp(seat, money)
     if seats.isEmpty then abandonHand()
     else phase match
       case Phase.Betting =>
@@ -331,6 +336,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     val gone = seats.values.filterNot(_.connected).toList
     game.removeLeavingPlayers(gone.map(_.player))
     seats = seats -- gone.map(_.connection.id)
+    gone.foreach(seat => standUp(seat, seat.player.balance.totalValue))
 
   /** Players who cannot afford the minimum bet are told the game is over for them and leave the table. */
   private def sendGameOverToBrokePlayers(): Unit =
@@ -338,12 +344,26 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     broke.flatMap(seatOf).foreach: seat =>
       seat.send(GameOver(game.balances(List(seat.player))))
       seats = seats - seat.connection.id
+      standUp(seat, seat.player.balance.totalValue)
     game.removeBrokePlayers()
 
   /** The deck is over: everybody gets the final balances and the table restarts with a fresh game. */
   private def closeTable(): Unit =
-    seats.values.foreach(seat => seat.send(GameOver(game.balances(List(seat.player)))))
+    seats.values.foreach: seat =>
+      seat.send(GameOver(game.balances(List(seat.player))))
+      standUp(seat, seat.player.balance.totalValue)
     resetTable()
+
+  /** The node is shutting down: a hand in progress is cancelled, so the bets go back to the players, and
+   * everybody leaves with their money. */
+  override def onStop(): Unit =
+    seats.values.foreach: seat =>
+      val hands = handsOf(seat)
+      val bets  = game.currentBets.filter(bet => hands.contains(bet.player)).map(_.amount).sum
+      standUp(seat, hands.map(_.balance.totalValue).sum + bets)
+    resetTable()
+
+  private def standUp(seat: Seat, balance: Double): Unit = cashier.standUp(seat.player.name, balance)
 
   /** Nobody is seated: a new game (with a new deck) is created for the next players. */
   private def resetTable(): Unit =
@@ -384,7 +404,7 @@ final class TableHandler(initialBalance: Double = TableHandler.DefaultBalance,
     seats.values.foreach(_.send(update))
 
 object TableHandler:
-  /** Balance given to every new player, until balances are persisted per user (D4). */
+  /** Balance of every player at a table that does not keep the balances (see [[Cashier.withoutMemory]]). */
   val DefaultBalance = 100.0
 
   val TableFull      = "The table is full"
@@ -398,6 +418,7 @@ object TableHandler:
   val InvalidBet     = s"The bet must be a positive multiple of ${Game.MinGameBet}, not greater than your balance"
   val ActionNotAllowed = "This action is not allowed now"
   val NoInsuranceOffered = "No insurance is offered to you now"
+  val NotEnoughMoney     = s"You need at least ${Game.MinGameBet} to sit down"
 
   /** How long the table waits for a decision before deciding for the player. */
   val DefaultDecisionTimeout: FiniteDuration = 30.seconds

@@ -16,11 +16,13 @@ object Main:
         val routes = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), tokens) else Map.empty
         val health = HealthServer(config.role, config.port, routes)
         // a table node runs one table: its logic is driven by a single writer thread
-        val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(TableHandler()))
+        val table    = Option.when(config.role == NodeRole.Table)(SingleWriterHandler(tableLogic(config.tableId)))
         val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
         sys.addShutdownHook:
-          endpoint.foreach(_.stop()) // first stop the network, so no new events arrive...
-          table.foreach(_.stop())    // ...then let the table finish the events already queued
+          // the table first: it finishes the events already queued and gives every player their money back;
+          // closing the connections afterwards does not count as players leaving in the middle of a hand
+          table.foreach(_.stop())
+          endpoint.foreach(_.stop())
           health.stop()
         health.start()
         endpoint.foreach: e =>
@@ -45,6 +47,13 @@ object Main:
   /** The tokens are signed with a secret shared by lobby and tables: a node without it cannot work. */
   private def sessionTokens(): SessionTokens =
     SessionTokens.fromEnv(sys.env).fold(error => fail(s"Invalid session configuration: $error"), identity)
+
+  /** The table keeps the players' balances in the database. When it starts, nobody can be sitting at it:
+   * the players still marked there were left by a crash, and are freed. */
+  private def tableLogic(tableId: String): TableHandler =
+    val balances = PostgresBalanceRepository(prepareDatabase())
+    balances.releaseTable(tableId)
+    TableHandler(cashier = DatabaseCashier(balances, tableId))
 
   /** The HTTP API of the lobby, next to /health. */
   private def lobbyRoutes(database: Database, tokens: SessionTokens): Map[String, HttpHandler] =

@@ -33,8 +33,10 @@ final class SingleWriterHandler(table: SessionHandler, tickPeriod: FiniteDuratio
   def onDisconnected(connection: Connection): Unit =
     submit(table.onDisconnected(connection))
 
-  /** Runs the events already queued, then stops the writer thread. Later events are ignored. */
+  /** Runs the events already queued, then lets the table stop and stops the writer thread.
+   * Later events are ignored. */
   def stop(): Unit =
+    submit(table.onStop())
     writer.shutdown()
     writer.awaitTermination(StopTimeoutSeconds, TimeUnit.SECONDS)
 

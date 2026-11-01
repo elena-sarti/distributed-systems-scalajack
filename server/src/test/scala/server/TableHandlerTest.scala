@@ -18,7 +18,18 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     val inbox = ListBuffer[ServerMessage]()
     def send(message: ServerMessage): Unit = inbox += message
 
+  /** A cashier that gives each player the balance set by the test (100 by default) and records what the
+   * table gives back when they leave. */
+  private final class RecordingCashier extends Cashier:
+    var balances = Map.empty[String, Double]
+    var refusals = Map.empty[String, String]
+    val returned = ListBuffer[(String, Double)]()
+    def sitDown(username: String): Either[String, Double] =
+      refusals.get(username).toLeft(balances.getOrElse(username, DefaultBalance))
+    def standUp(username: String, balance: Double): Unit = returned += username -> balance
+
   var table: TableHandler = _
+  private var cashier: RecordingCashier = _
 
   /** The clock of the tables built by [[tableWithDeck]]: it only moves when a test moves it. */
   private val startTime = Instant.parse("2026-01-01T00:00:00Z")
@@ -26,11 +37,12 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
 
   override def beforeEach(): Unit =
     now = startTime
-    table = TableHandler()
+    cashier = RecordingCashier()
+    table = TableHandler(cashier = cashier)
 
   /** A table whose deck deals exactly the given cards, in this order. */
   private def tableWithDeck(cards: StandardCard*): TableHandler =
-    TableHandler(newGame = () => Game(List.empty, Deck.testDeck(cards*)), clock = () => now)
+    TableHandler(cashier = cashier, newGame = () => Game(List.empty, Deck.testDeck(cards*)), clock = () => now)
 
   /** A new client that asks to sit with the given name. */
   private def join(name: String, at: TableHandler = table): FakeConnection =
@@ -388,7 +400,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.last shouldBe GameOver(List(("Alice", DefaultBalance - 10)))
     join("Alice", dealt).inbox.head shouldBe JoinAccepted("Alice", DefaultBalance) // a new game for new players
 
-  // ---- C6: the seats released by a voluntary exit or by the end of the game are free at once ----
+  // ---- the seats released by a voluntary exit or by the end of the game are free at once ----
 
   /** Fills every seat of `at`: Player1, Player2, ... */
   private def fillTable(at: TableHandler = table): List[FakeConnection] =
@@ -651,7 +663,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
     lastTable(alice).players.map(_.bet) shouldBe List(Some(15))
 
-  // ---- disconnection in the middle of a hand, and decisions that do not arrive (C5) ----
+  // ---- disconnection in the middle of a hand, and decisions that do not arrive ----
 
   /** Alice 10+6 and Bob 9+7 against a dealer 8+5 who draws a ten and busts: if both stand, both win 20. */
   private def aliceAndBobAgainstBustingDealer(): (TableHandler, FakeConnection, FakeConnection) =
@@ -862,3 +874,67 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onDisconnected(bob)
     alice.inbox.last shouldBe ActionRequest("Alice", canDoubleDown = true, canSplit = false)
     timeouts(bob) shouldBe List.empty
+
+  // ---- the balances the players bring to the table and take away ----
+
+  test("a player sits down with the balance kept from the last time"):
+    cashier.balances = Map("Alice" -> 137.5)
+    val alice = join("Alice")
+    alice.inbox.head shouldBe JoinAccepted("Alice", 137.5)
+    alice.inbox.last shouldBe BetRequest(137.5, Game.MinGameBet)
+
+  test("a player who cannot sit down here is told why and takes no seat"):
+    cashier.refusals = Map("Alice" -> "You are already sitting at another table")
+    join("Alice").inbox.toList shouldBe List(JoinRejected("You are already sitting at another table"))
+    table.freeSeats shouldBe Game.MaxPlayersNum
+
+  test("a player without the money for the minimum bet is refused, and the money is given back as it was"):
+    cashier.balances = Map("Alice" -> 2.5)
+    join("Alice").inbox.toList shouldBe List(JoinRejected(NotEnoughMoney))
+    cashier.returned.toList shouldBe List("Alice" -> 2.5)
+
+  test("a player who leaves takes away the balance, without the bet lost on the table"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Six, Value.Seven)
+    dealt.onMessage(alice, LeaveTable)
+    cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance - 10))
+
+  test("a player who leaves after a split takes away the money of every hand"):
+    val (dealt, alice) = aliceDealt(splitDeck*)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Stand) // the money left goes on to the split hand
+    dealt.onMessage(alice, LeaveTable)
+    cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance - 20))
+
+  test("a player who disconnects during a hand takes away the balance once the bets are settled"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onDisconnected(alice)
+    cashier.returned.isEmpty shouldBe true // the hand is not over yet
+    dealt.onMessage(bob, Stand)
+    cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance - 10 + 20))
+
+  test("a player who loses everything leaves with what is left"):
+    val (dealt, alice) = aliceBetting(100, Value.Ten, Value.Nine, Value.Six, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand)
+    cashier.returned.toList shouldBe List("Alice" -> 0.0)
+
+  test("when the cut card comes out every player leaves with their balance"):
+    val dealt = TableHandler(cashier = cashier, newGame = () => Game(List.empty,
+      Deck.testDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven), CutCard, card(Value.Two))))
+    val alice = join("Alice", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    dealt.onMessage(alice, Stand)
+    cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance - 10))
+
+  test("when the table stops in the middle of a hand the bets go back to the players, who leave with their money"):
+    val (dealt, alice, bob) = aliceAndBobAgainstBustingDealer()
+    dealt.onMessage(alice, Hit) // Alice busts, but the hand does not count any more: her bet goes back too
+    dealt.onStop()
+    cashier.returned.toSet shouldBe Set("Alice" -> DefaultBalance, "Bob" -> DefaultBalance)
+    dealt.freeSeats shouldBe Game.MaxPlayersNum
+
+  test("when the table stops between two hands every player leaves with their balance"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Queen, Value.Seven, Value.Two)
+    dealt.onMessage(alice, Stand) // 20 against 18: Alice wins, and is asked for the next bet
+    dealt.onStop()
+    cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance + 10))
+

@@ -149,3 +149,15 @@ class SingleWriterHandlerTest extends AnyFunSuite with Eventually:
       writer.onMessage(connection, ClientMessage.LeaveTable)
       eventually(timeout(Span(5, Seconds))):
         tableLogic.freeSeats shouldBe Game.MaxPlayersNum
+
+  test("when the writer stops, the table is told after the events already queued"):
+    val log = LinkedBlockingQueue[String]()
+    val table = new SessionHandler:
+      def onConnected(connection: Connection): Unit = ()
+      def onDisconnected(connection: Connection): Unit = ()
+      def onMessage(connection: Connection, message: ClientMessage): Unit = log.put(message.toString)
+      override def onStop(): Unit = log.put("stopped")
+    val writer = SingleWriterHandler(table)
+    (1 to 3).foreach(i => writer.onMessage(connection, ClientMessage.PlaceBet(i)))
+    writer.stop()
+    (1 to 4).map(_ => next(log)) shouldBe (1 to 3).map(i => ClientMessage.PlaceBet(i).toString) :+ "stopped"

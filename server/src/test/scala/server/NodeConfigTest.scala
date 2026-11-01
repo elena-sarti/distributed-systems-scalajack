@@ -33,3 +33,7 @@ class NodeConfigTest extends AnyFunSuite:
   test("fails on an invalid WebSocket port"):
     Seq("abc", "0", "70000").foreach: p =>
       NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "NODE_WS_PORT" -> p)).isLeft shouldBe true
+
+  test("a table node is named by TABLE_ID, with a default when it is absent"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "TABLE_ID" -> "table-7")).map(_.tableId) shouldBe Right("table-7")
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table")).map(_.tableId) shouldBe Right(NodeConfig.DefaultTableId)

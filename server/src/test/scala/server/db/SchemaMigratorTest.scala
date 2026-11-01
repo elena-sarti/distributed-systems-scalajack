@@ -38,3 +38,19 @@ class SchemaMigratorTest extends PostgresSuite:
     SchemaMigrator.migrate(database)
     PostgresBalanceRepository(database).balanceOf("Alice") shouldBe Some(BalanceRepository.InitialBalance)
     countUsers() shouldBe 1
+
+  test("nodes that start together and migrate at the same moment take turns, without errors"):
+    val start  = java.util.concurrent.CountDownLatch(1)
+    val errors = java.util.concurrent.ConcurrentLinkedQueue[Throwable]()
+    val nodes = (1 to 4).map: _ =>
+      Thread: () =>
+        start.await()
+        try SchemaMigrator.migrate(database)
+        catch case error: Throwable => errors.add(error)
+        ()
+    nodes.foreach(_.start())
+    start.countDown()
+    nodes.foreach(_.join())
+    errors.isEmpty shouldBe true
+    insertUser("Alice")
+    countUsers() shouldBe 1
