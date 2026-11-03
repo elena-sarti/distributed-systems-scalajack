@@ -1,6 +1,7 @@
 package server
 
 import utils.TestExports.*
+import java.time.Duration
 
 class NodeConfigTest extends AnyFunSuite:
 
@@ -37,3 +38,29 @@ class NodeConfigTest extends AnyFunSuite:
   test("a table node is named by TABLE_ID, with a default when it is absent"):
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "TABLE_ID" -> "table-7")).map(_.tableId) shouldBe Right("table-7")
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "table")).map(_.tableId) shouldBe Right(NodeConfig.DefaultTableId)
+
+  test("a table node announces itself to the lobby only if LOBBY_URL is set"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table")).map(_.lobbyUrl) shouldBe Right(None)
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "LOBBY_URL" -> "http://lobby:8080")).map(_.lobbyUrl) shouldBe
+      Right(Some("http://lobby:8080"))
+
+  test("LOBBY_URL must be an http or https address"):
+    Seq("lobby:8080", "ftp://lobby", " ").foreach: url =>
+      NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "LOBBY_URL" -> url)).isLeft shouldBe true
+
+  test("the address given to the clients is localhost and the WebSocket port, unless TABLE_HOST and TABLE_PUBLIC_WS_PORT say otherwise"):
+    val default = NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "NODE_WS_PORT" -> "9100")).toOption.get
+    (default.publicHost, default.advertisedWsPort) shouldBe ("localhost", 9100)
+    val custom = NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "TABLE_HOST" -> "casino.example", "TABLE_PUBLIC_WS_PORT" -> "9091")).toOption.get
+    (custom.publicHost, custom.advertisedWsPort) shouldBe ("casino.example", 9091)
+
+  test("an invalid TABLE_PUBLIC_WS_PORT is refused"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "TABLE_PUBLIC_WS_PORT" -> "0")).isLeft shouldBe true
+
+  test("heartbeat period and timeout have defaults, can be set in seconds, and the timeout must be longer than the period"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby")).map(_.heartbeat) shouldBe Right(HeartbeatConfig.Default)
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "HEARTBEAT_PERIOD_SECONDS" -> "1", "HEARTBEAT_TIMEOUT_SECONDS" -> "3"))
+      .map(_.heartbeat) shouldBe Right(HeartbeatConfig(Duration.ofSeconds(1), Duration.ofSeconds(3)))
+    Seq(("abc", "3"), ("0", "3"), ("5", "5"), ("5", "2")).foreach: (period, timeout) =>
+      NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "HEARTBEAT_PERIOD_SECONDS" -> period, "HEARTBEAT_TIMEOUT_SECONDS" -> timeout))
+        .isLeft shouldBe true

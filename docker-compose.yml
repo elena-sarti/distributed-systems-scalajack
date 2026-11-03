@@ -35,6 +35,8 @@ services:
     environment:
       <<: *node-environment
       NODE_ROLE: lobby
+      # a table is marked unavailable after this many seconds without a heartbeat (default 6: 3 missed beats)
+      HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
     ports:
       - "9080:8080"
     depends_on:
@@ -47,12 +49,19 @@ services:
       <<: *node-environment
       NODE_ROLE: table
       TABLE_ID: table-1   # marks in the database the players sitting here: it must not change between restarts
+      LOBBY_URL: http://lobby:8080   # where the table announces itself and sends its heartbeats
+      # the address the clients will be given: they are outside Docker, so it is the published port (9091 below)
+      TABLE_HOST: localhost
+      TABLE_PUBLIC_WS_PORT: "9091"
+      HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
     ports:
       - "9081:8080"   # health (HTTP)
       - "9091:8090"   # WebSocket
     depends_on:       # the balances are in the database
       db:
         condition: service_healthy
+      lobby:          # it can start before the lobby is ready anyway (it retries), but this avoids useless attempts
+        condition: service_started
 
 volumes:
   db-data:

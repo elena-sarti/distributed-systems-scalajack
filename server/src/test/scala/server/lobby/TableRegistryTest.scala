@@ -2,6 +2,7 @@ package server.lobby
 
 import utils.ModelExports.Game
 import utils.TestExports.*
+import java.time.Instant
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
 class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
@@ -117,3 +118,43 @@ class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
     pool.shutdown()
     pool.awaitTermination(10, TimeUnit.SECONDS) shouldBe true
     registry.find("table-1").map(_.freeSeats).get should (be >= 0 and be <= Capacity)
+
+  // ---- heartbeats (E2): the registry remembers when each table was last heard from ----
+
+  private val t0 = Instant.parse("2026-01-01T10:00:00Z")
+
+  test("a heartbeat updates the free seats and makes an unavailable table available again"):
+    register("table-1")
+    registry.markStatus("table-1", TableStatus.Unavailable).value
+    val info = registry.heartbeat("table-1", 3, t0).value
+    info.freeSeats shouldBe 3
+    info.status shouldBe TableStatus.Available
+
+  test("a heartbeat from an unknown table, or with the seats out of range, is refused and changes nothing"):
+    registry.heartbeat("ghost", 1, t0) shouldBe Left(RegistryError.UnknownTable("ghost"))
+    register("table-1")
+    registry.heartbeat("table-1", Capacity + 1, t0) shouldBe Left(RegistryError.InvalidFreeSeats(Capacity + 1, Capacity))
+    registry.find("table-1").map(_.freeSeats) shouldBe Some(Capacity)
+
+  test("a table not heard from since the given instant is marked unavailable, the others are left alone"):
+    registry.register("silent", "h", 1, t0).value
+    registry.register("alive", "h", 2, t0).value
+    registry.heartbeat("alive", Capacity, t0.plusSeconds(10)).value
+    registry.markSilentUnavailable(t0.plusSeconds(5)).map(_.id) shouldBe Seq("silent")
+    registry.find("silent").map(_.status) shouldBe Some(TableStatus.Unavailable)
+    registry.find("alive").map(_.status) shouldBe Some(TableStatus.Available)
+
+  test("a table heard exactly at the limit instant is still available, one millisecond older is not"):
+    registry.register("table-1", "h", 1, t0).value
+    registry.markSilentUnavailable(t0) shouldBe empty
+    registry.markSilentUnavailable(t0.plusMillis(1)).map(_.id) shouldBe Seq("table-1")
+
+  test("a table marked unavailable is reported once, and keeps its seats"):
+    registry.register("table-1", "h", 1, t0).value
+    registry.heartbeat("table-1", 2, t0).value
+    registry.markSilentUnavailable(t0.plusSeconds(1)).map(_.freeSeats) shouldBe Seq(2)
+    registry.markSilentUnavailable(t0.plusSeconds(2)) shouldBe empty
+
+  test("registering a table counts as hearing from it"):
+    registry.register("table-1", "h", 1, t0.plusSeconds(100)).value
+    registry.markSilentUnavailable(t0.plusSeconds(50)) shouldBe empty
