@@ -3,8 +3,9 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.lobby.{HeartbeatMonitor, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
+import server.lobby.{DockerTableProvisioner, HeartbeatMonitor, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
+import java.nio.file.Path
 import scala.util.control.NonFatal
 
 object Main:
@@ -15,7 +16,7 @@ object Main:
         val tokens = sessionTokens() // the lobby issues the session tokens, the tables check them
         // the lobby owns the users: their table must exist before the node accepts anything
         val registry = TableRegistry() // only used by the lobby: the tables that announced themselves
-        val routes   = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), tokens, registry) else Map.empty
+        val routes   = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), tokens, registry, tableDispatcher(config, registry)) else Map.empty
         // the lobby checks every period which tables have gone silent
         val monitor  = Option.when(config.role == NodeRole.Lobby)(silenceMonitor(registry, config.heartbeat))
         val health = HealthServer(config.role, config.port, routes)
@@ -76,15 +77,22 @@ object Main:
     val announcer = TableAnnouncer(HttpLobbyGateway(lobbyUrl), config.tableId, config.publicHost, config.advertisedWsPort, seats)
     PeriodicTask("table-announcer", config.heartbeat.period, runFirstNow = true)(() => announcer.tick())
 
+  /** The dispatcher sends the players to the tables, and starts the nodes of the pool through Docker when
+   * all the tables are full. */
+  private def tableDispatcher(config: NodeConfig, registry: TableRegistry): TableDispatcher =
+    TableDispatcher(registry, DockerTableProvisioner(Path.of(config.dockerSocket)), config.tablePool)
+
   /** The HTTP API of the lobby, next to /health. */
-  private def lobbyRoutes(database: Database, tokens: SessionTokens, registry: TableRegistry): Map[String, HttpHandler] =
+  private def lobbyRoutes(database: Database, tokens: SessionTokens, registry: TableRegistry,
+                          dispatcher: TableDispatcher): Map[String, HttpHandler] =
     val users  = PostgresUserRepository(database)
     val hasher = Pbkdf2PasswordHasher()
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
       LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, PostgresBalanceRepository(database), hasher, tokens)),
       LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry),
-      LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry)
+      LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry),
+      LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
     )
 
   private def fail(message: String): Nothing =

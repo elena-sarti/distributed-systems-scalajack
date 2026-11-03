@@ -51,3 +51,13 @@ class LobbyApiTest extends AnyFunSuite:
     LobbyApi.TableRegisterPath should startWith("/tables/")
     LobbyApi.TableHeartbeatPath should startWith("/tables/")
     LobbyApi.TableRegisterPath should not equal LobbyApi.TableHeartbeatPath
+
+  test("an assignment request and its answers survive a JSON round-trip"):
+    val request = AssignRequest("a.b.c")
+    LobbyApi.decode[AssignRequest](LobbyApi.encode(request)) shouldBe Right(request)
+    val address = TableAddress("table-1", "localhost", 9091)
+    LobbyApi.decode[TableAddress](LobbyApi.encode(address)) shouldBe Right(address)
+    LobbyApi.decode[TableStarting](LobbyApi.encode(TableStarting("table-2"))) shouldBe Right(TableStarting("table-2"))
+
+  test("a printed assignment request does not show the token"):
+    AssignRequest("the-session-token").toString should not include "the-session-token"

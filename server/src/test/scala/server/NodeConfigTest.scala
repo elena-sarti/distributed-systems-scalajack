@@ -64,3 +64,17 @@ class NodeConfigTest extends AnyFunSuite:
     Seq(("abc", "3"), ("0", "3"), ("5", "5"), ("5", "2")).foreach: (period, timeout) =>
       NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "HEARTBEAT_PERIOD_SECONDS" -> period, "HEARTBEAT_TIMEOUT_SECONDS" -> timeout))
         .isLeft shouldBe true
+
+  test("the tables the lobby may start are listed in TABLE_POOL, and there are none by default"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby")).map(_.tablePool) shouldBe Right(Seq.empty)
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "TABLE_POOL" -> "table-1, table-2 ,table-3")).map(_.tablePool) shouldBe
+      Right(Seq("table-1", "table-2", "table-3"))
+
+  test("TABLE_POOL must hold valid names, without empty items or repetitions"):
+    Seq("table-1,,table-2", "table-1,table-1", "bad/name", "../x", " ").foreach: pool =>
+      NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "TABLE_POOL" -> pool)).isLeft shouldBe true
+
+  test("the Docker socket is the standard one unless DOCKER_SOCKET says otherwise"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby")).map(_.dockerSocket) shouldBe Right("/var/run/docker.sock")
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "DOCKER_SOCKET" -> "/tmp/docker.sock")).map(_.dockerSocket) shouldBe
+      Right("/tmp/docker.sock")

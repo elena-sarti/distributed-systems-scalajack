@@ -1,5 +1,6 @@
 package server
 
+import server.lobby.TableProvisioner
 import java.time.Duration
 
 /** @param tableId   the name of the table run by a table node: it marks the players sitting there in the
@@ -8,13 +9,18 @@ import java.time.Duration
  * @param publicHost the address clients use to reach a table node (not always the one the node sees).
  * @param publicWsPort the WebSocket port clients use, if it is not the node's own (e.g. a port published by Docker).
  * @param heartbeat how often the tables say they are alive and how long the lobby waits for them.
+ * @param tablePool the ids of the tables the lobby may start, in the order it starts them: how many they are
+ *                  is the maximum number of tables. Used by the lobby.
+ * @param dockerSocket the Unix socket of the Docker daemon, used by the lobby to start the tables.
  */
 final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.DefaultWsPort,
                             tableId: String = NodeConfig.DefaultTableId,
                             lobbyUrl: Option[String] = None,
                             publicHost: String = NodeConfig.DefaultPublicHost,
                             publicWsPort: Option[Int] = None,
-                            heartbeat: HeartbeatConfig = HeartbeatConfig.Default):
+                            heartbeat: HeartbeatConfig = HeartbeatConfig.Default,
+                            tablePool: Seq[String] = Seq.empty,
+                            dockerSocket: String = NodeConfig.DefaultDockerSocket):
   /** The WebSocket port to hand out to the clients. */
   def advertisedWsPort: Int = publicWsPort.getOrElse(wsPort)
 
@@ -41,6 +47,7 @@ object NodeConfig:
   val DefaultWsPort = 8090 //webSocket port: it's easier to use two different ports for the health HTTP and for the WebSocket
   val DefaultTableId = "table"
   val DefaultPublicHost = "localhost"
+  val DefaultDockerSocket = "/var/run/docker.sock"
 
   /** Pure function: takes the environment as a parameter, so it is trivially testable. */
   def fromEnv(env: Map[String, String]): Either[String, NodeConfig] =
@@ -54,7 +61,9 @@ object NodeConfig:
       publicHost = env.get("TABLE_HOST").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultPublicHost)
       publicWsPort <- env.get("TABLE_PUBLIC_WS_PORT").fold[Either[String, Option[Int]]](Right(None))(_ => parsePort("TABLE_PUBLIC_WS_PORT", env, wsPort).map(Some(_)))
       heartbeat <- HeartbeatConfig.fromEnv(env)
-    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat)
+      pool <- parsePool(env)
+      dockerSocket = env.get("DOCKER_SOCKET").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultDockerSocket)
+    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat, pool, dockerSocket)
 
   private def parsePort(name: String, env: Map[String, String], default: Int): Either[String, Int] =
     env.get(name).fold(Right(default)): s =>
@@ -65,3 +74,14 @@ object NodeConfig:
     env.get("LOBBY_URL").fold(Right(None)): raw =>
       val url = raw.trim
       Either.cond(url.startsWith("http://") || url.startsWith("https://"), Some(url), s"Invalid LOBBY_URL '$raw'")
+
+  /** A comma separated list of table ids. Absent means none; an empty item or a repetition is almost surely
+   * a typo, and a wrong pool would only show when the lobby tries to start a node, so it is refused now. */
+  private def parsePool(env: Map[String, String]): Either[String, Seq[String]] =
+    env.get("TABLE_POOL").fold[Either[String, Seq[String]]](Right(Seq.empty)): raw =>
+      val ids = raw.split(",", -1).toSeq.map(_.trim)
+      ids.find(!TableProvisioner.isValidId(_)) match
+        case Some(bad) => Left(s"Invalid table id '$bad' in TABLE_POOL")
+        case None if ids.distinct.size != ids.size => Left("TABLE_POOL has the same table twice")
+        case None => Right(ids)
+

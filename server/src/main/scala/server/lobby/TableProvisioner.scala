@@ -9,3 +9,9 @@ trait TableProvisioner:
    * @return `true` if the request was accepted (or the node was already running), `false` if it failed.
    *         Never throws. */
   def start(tableId: String): Boolean
+
+object TableProvisioner:
+  /** What a table id may be: letters, digits, `_`, `.`, `-`, not starting with a symbol. It is also a valid
+   * name for a container, and it cannot change the path of a request. */
+  def isValidId(id: String): Boolean = id.matches("[A-Za-z0-9][A-Za-z0-9_.-]*")
+

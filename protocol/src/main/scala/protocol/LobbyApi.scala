@@ -23,6 +23,12 @@ object LobbyApi:
    * [[ApiError]] with status 404 if the lobby does not know the table (the node must register again). */
   val TableHeartbeatPath = "/tables/heartbeat"
 
+  /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
+   * - 200 and a [[TableAddress]]: connect to that table, directly;
+   * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
+   * - 401 (invalid token) or 503 (server full, or a new table could not be started) and an [[ApiError]]. */
+  val AssignPath = "/assign"
+
   // The bodies that hold a password or a token do not show it when printed, so it cannot
   // end up in a log by mistake.
 
@@ -47,6 +53,16 @@ object LobbyApi:
   final case class TableHeartbeat(id: String, freeSeats: Int) derives ReadWriter
 
   final case class TableAck(id: String) derives ReadWriter
+
+  /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
+  final case class AssignRequest(token: String) derives ReadWriter:
+    override def toString: String = "AssignRequest(***)"
+
+  /** Where to play: after this the client talks to the table node, and the lobby is not involved any more. */
+  final case class TableAddress(tableId: String, host: String, wsPort: Int) derives ReadWriter
+
+  /** A new table node is being started: ask again shortly. */
+  final case class TableStarting(tableId: String) derives ReadWriter
 
   /** A request that failed, with the reason (HTTP 4xx or 5xx). */
   final case class ApiError(reason: String) derives ReadWriter

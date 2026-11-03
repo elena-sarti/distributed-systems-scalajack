@@ -13,6 +13,25 @@ x-node-environment: &node-environment
   # the default is only for local runs: a real deployment sets its own SESSION_SECRET in .env
   SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
 
+# What every table node has in common. The tables differ only in their name and in the ports published
+# for the clients, which are given where each table is declared.
+x-table-environment: &table-environment
+  <<: *node-environment
+  NODE_ROLE: table
+  LOBBY_URL: http://lobby:8080   # where the table announces itself and sends its heartbeats
+  TABLE_HOST: localhost          # the clients are outside Docker: they reach a table on the published port
+  HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+
+x-table-depends: &table-depends
+  db:               # the balances are in the database
+    condition: service_healthy
+  lobby:            # it can start before the lobby is ready anyway (it retries), but this avoids useless attempts
+    condition: service_started
+
+# The lobby starts more tables when all are full, up to the three below. `docker compose up` starts only
+# table-1; table-2 and table-3 belong to the profile "pool", so they are not started by it. They must
+# exist, though, for the lobby to start them: create them once, without starting them, with
+#   docker compose --profile pool up --no-start
 
 services:
   db:
@@ -37,31 +56,55 @@ services:
       NODE_ROLE: lobby
       # a table is marked unavailable after this many seconds without a heartbeat (default 6: 3 missed beats)
       HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
+      # the tables the lobby may start, in this order: their number is the maximum number of tables
+      TABLE_POOL: table-1,table-2,table-3
     ports:
       - "9080:8080"
+    volumes:
+      # the lobby starts the tables through the Docker daemon. This gives it wide control of Docker on the
+      # host: acceptable to simulate the nodes on one machine, not for a real deployment.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
 
   table-1:
     <<: *backend
+    container_name: table-1   # the lobby starts a table by the name of its container, which is its TABLE_ID
     environment:
-      <<: *node-environment
-      NODE_ROLE: table
+      <<: *table-environment
       TABLE_ID: table-1   # marks in the database the players sitting here: it must not change between restarts
-      LOBBY_URL: http://lobby:8080   # where the table announces itself and sends its heartbeats
-      # the address the clients will be given: they are outside Docker, so it is the published port (9091 below)
-      TABLE_HOST: localhost
-      TABLE_PUBLIC_WS_PORT: "9091"
-      HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+      TABLE_PUBLIC_WS_PORT: "9091"   # the address the clients are given: the published port (below)
     ports:
       - "9081:8080"   # health (HTTP)
       - "9091:8090"   # WebSocket
-    depends_on:       # the balances are in the database
-      db:
-        condition: service_healthy
-      lobby:          # it can start before the lobby is ready anyway (it retries), but this avoids useless attempts
-        condition: service_started
+    depends_on: *table-depends
+
+  table-2:
+    <<: *backend
+    container_name: table-2
+    profiles: ["pool"]
+    environment:
+      <<: *table-environment
+      TABLE_ID: table-2
+      TABLE_PUBLIC_WS_PORT: "9092"
+    ports:
+      - "9082:8080"
+      - "9092:8090"
+    depends_on: *table-depends
+
+  table-3:
+    <<: *backend
+    container_name: table-3
+    profiles: ["pool"]
+    environment:
+      <<: *table-environment
+      TABLE_ID: table-3
+      TABLE_PUBLIC_WS_PORT: "9093"
+    ports:
+      - "9083:8080"
+      - "9093:8090"
+    depends_on: *table-depends
 
 volumes:
   db-data:
