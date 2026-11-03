@@ -16,10 +16,10 @@ final class TableAnnouncer(gateway: LobbyGateway, id: String, host: String, wsPo
   def tick(): Unit =
     if !registered then
       registered = gateway.register(id, host, wsPort)
-      if registered then println(s"Table $id registered at the lobby")
+      if registered then System.out.println(s"Table $id registered at the lobby")
     if registered then
       gateway.heartbeat(id, seats.freeSeats) match
         case HeartbeatResult.UnknownTable =>
-          println(s"The lobby does not know table $id any more: registering again")
+          System.out.println(s"The lobby does not know table $id any more: registering again")
           registered = false
         case _ => () // acknowledged, or not reachable: the next heartbeat will tell

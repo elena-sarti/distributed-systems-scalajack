@@ -31,8 +31,12 @@ object TestLobby:
     LobbyApi.decode[ApiError](response.body()).map(_.reason)
       .getOrElse(throw AssertionError(s"Not an error: ${response.body()}"))
 
+  // System.out and System.err are shared by the whole JVM, and sbt runs the test suites in parallel: two
+  // captures at the same time would swap the streams under each other and lose lines. One at a time.
+  private val captureLock = Object()
+
   /** Everything written on stdout and stderr, by any thread, while `body` runs. */
-  def capturedOutput(body: => Unit): String =
+  def capturedOutput(body: => Unit): String = captureLock.synchronized:
     val captured   = ByteArrayOutputStream()
     val capture    = PrintStream(captured, true, "UTF-8")
     val (out, err) = (System.out, System.err)

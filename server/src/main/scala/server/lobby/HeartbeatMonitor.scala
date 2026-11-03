@@ -15,5 +15,5 @@ final class HeartbeatMonitor(registry: TableRegistry, timeout: Duration, clock: 
   /** @return the tables marked unavailable by this check. */
   def check(): Seq[TableInfo] =
     val silent = registry.markSilentUnavailable(clock().minus(timeout))
-    silent.foreach(table => println(s"Table ${table.id} sent no heartbeat for ${timeout.toMillis} ms: marked unavailable"))
+    silent.foreach(table => System.out.println(s"Table ${table.id} sent no heartbeat for ${timeout.toMillis} ms: marked unavailable"))
     silent

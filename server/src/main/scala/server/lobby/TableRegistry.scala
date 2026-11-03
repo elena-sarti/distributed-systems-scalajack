@@ -1,13 +1,14 @@
 package server.lobby
 
 import utils.ModelExports.Game
-import java.time.Instant
+import java.time.{Duration, Instant}
 
 /** The registry of the tables, kept by the lobby: which tables exist, where they are, how many seats are
  * free and whether they can be used. It is the only place where the lobby keeps this information, so the
  * services built on it (heartbeats, dispatching) all see the same state.
  *
- * It also remembers when each table was last heard from, so that a table that goes silent can be found.
+ * It also remembers when each table was last heard from, so that a table that goes silent can be found,
+ * and which seats have been promised to players that have not sat down yet (see [[reserveSeat]]).
  * The time is always given by the caller (never read here when it matters), so the rules are deterministic.
  *
  * It lives in memory on purpose: it describes the nodes that are running now, and it is rebuilt when they
@@ -19,8 +20,12 @@ import java.time.Instant
  * @param capacity how many players every table can seat.
  */
 final class TableRegistry(capacity: Int = Game.MaxPlayersNum):
-  /** A table together with the last time it was heard from (registration or heartbeat). */
-  private final case class Entry(info: TableInfo, lastSeen: Instant)
+  /** A table, the last time it was heard from (registration or heartbeat), and the seats promised to players
+   * who may not have sat down yet: one expiry instant for each. */
+  private final case class Entry(info: TableInfo, lastSeen: Instant, reservations: Vector[Instant] = Vector.empty):
+    /** The seats that can still be promised at `at`: the free ones, less the promises not yet expired. The
+     * table reports its free seats only from time to time, so alone they could be given twice. */
+    def assignable(at: Instant): Int = math.max(0, info.freeSeats - reservations.count(_.isAfter(at)))
 
   private var byId = Map.empty[String, Entry]
 
@@ -39,7 +44,7 @@ final class TableRegistry(capacity: Int = Game.MaxPlayersNum):
   /** A sign of life from a table: it tells how many seats are free, it is heard at `at`, and it is
    * available (also when it had been marked unavailable because it was silent). */
   def heartbeat(id: String, free: Int, at: Instant = Instant.now()): Either[RegistryError, TableInfo] =
-    withSeats(id, free)(entry => Entry(entry.info.copy(status = TableStatus.Available), at))
+    withSeats(id, free)(entry => entry.copy(info = entry.info.copy(status = TableStatus.Available), lastSeen = at))
 
   /** Marks a table as usable or not, leaving its seats as they are. */
   def markStatus(id: String, status: TableStatus): Either[RegistryError, TableInfo] =
@@ -53,6 +58,29 @@ final class TableRegistry(capacity: Int = Game.MaxPlayersNum):
     val marked = silent.map(entry => entry.copy(info = entry.info.copy(status = TableStatus.Unavailable))).toSeq
     byId = byId ++ marked.map(entry => entry.info.id -> entry)
     marked.map(_.info).sortBy(_.id)
+
+  /** Promises a seat to a player: picks the first table (in order of id) that is available and has a seat
+   * that can still be assigned, and keeps that seat taken for `holdFor`. The choice and the reservation
+   * are one atomic step, so two players are never given the same seat.
+   *
+   * The reservation is needed because the free seats come from the heartbeats, which arrive late: a
+   * player who has been assigned but has not sat down yet is not in the table's count. The reservation
+   * ends when it expires (a seat is never lost for long if the player does not arrive). Once the player
+   * sits, the table's count shows it and the reservation only makes the table look a little fuller than it
+   * is until it expires: this errs on the side of never giving a seat twice.
+   *
+   * @return the table, as it is registered (the caller needs its address), or `None` if no seat is left. */
+  def reserveSeat(at: Instant, holdFor: Duration): Option[TableInfo] = synchronized:
+    val candidate = byId.values.toSeq.sortBy(_.info.id)
+      .find(entry => entry.info.status == TableStatus.Available && entry.assignable(at) > 0)
+    candidate.map: entry =>
+      // expired reservations are dropped now, so the list does not grow
+      val reserved = entry.copy(reservations = entry.reservations.filter(_.isAfter(at)) :+ at.plus(holdFor))
+      byId = byId.updated(entry.info.id, reserved)
+      entry.info
+
+  /** How many seats of a table can still be promised at `at`, or `None` if the table is not known. */
+  def assignableSeats(id: String, at: Instant): Option[Int] = synchronized(byId.get(id).map(_.assignable(at)))
 
   /** Forgets a table. @return `true` if it was there. */
   def remove(id: String): Boolean = synchronized:

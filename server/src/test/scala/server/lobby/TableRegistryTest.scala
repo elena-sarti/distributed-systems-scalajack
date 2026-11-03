@@ -2,7 +2,8 @@ package server.lobby
 
 import utils.ModelExports.Game
 import utils.TestExports.*
-import java.time.Instant
+import java.time.{Duration, Instant}
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
 class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
@@ -158,3 +159,79 @@ class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
   test("registering a table counts as hearing from it"):
     registry.register("table-1", "h", 1, t0.plusSeconds(100)).value
     registry.markSilentUnavailable(t0.plusSeconds(50)) shouldBe empty
+
+  // ---- seat reservations (E3): a seat given to a player stays taken until the table reports it ----
+
+  private val hold = Duration.ofSeconds(10)
+
+  private def reserve(from: TableRegistry = registry, at: Instant = t0): Option[String] =
+    from.reserveSeat(at, hold).map(_.id)
+
+  test("with no table, no seat can be reserved"):
+    reserve() shouldBe None
+
+  test("a reservation is for the first table, in order of id, that has a free seat"):
+    Seq("table-2", "table-1").foreach(register(_))
+    reserve() shouldBe Some("table-1")
+
+  test("a table gets reservations until all its seats are taken, then the next table does"):
+    val small = TableRegistry(capacity = 2)
+    Seq("a", "b").foreach(small.register(_, "h", 1))
+    Seq.fill(5)(reserve(small)) shouldBe Seq(Some("a"), Some("a"), Some("b"), Some("b"), None)
+
+  test("tables that are unavailable or full are skipped"):
+    Seq("table-1", "table-2", "table-3").foreach(register(_))
+    registry.markStatus("table-1", TableStatus.Unavailable).value
+    registry.updateFreeSeats("table-2", 0).value
+    reserve() shouldBe Some("table-3")
+
+  test("a reservation lowers the seats that can be assigned, not the seats the table reports"):
+    register("table-1")
+    reserve()
+    registry.assignableSeats("table-1", t0) shouldBe Some(Capacity - 1)
+    registry.find("table-1").map(_.freeSeats) shouldBe Some(Capacity)
+
+  test("the assignable seats of an unknown table are not known"):
+    registry.assignableSeats("ghost", t0) shouldBe None
+
+  test("a heartbeat that does not show the player yet does not give the reserved seat back"):
+    val small = TableRegistry(capacity = 1)
+    small.register("a", "h", 1, t0).value
+    reserve(small) shouldBe Some("a")
+    small.heartbeat("a", 1, t0.plusSeconds(2)).value // the player has not sat down yet: the table still says 1 free
+    reserve(small, t0.plusSeconds(2)) shouldBe None
+
+  test("the assignable seats are never negative, even if the table reports fewer seats than are reserved"):
+    register("table-1")
+    reserve()
+    registry.heartbeat("table-1", 0, t0).value
+    registry.assignableSeats("table-1", t0) shouldBe Some(0)
+
+  test("a reservation that is not used expires after the hold time, and the seat can be given again"):
+    val small = TableRegistry(capacity = 1)
+    small.register("a", "h", 1, t0).value
+    reserve(small) shouldBe Some("a")
+    reserve(small, t0.plus(hold).minusMillis(1)) shouldBe None // still held
+    reserve(small, t0.plus(hold)) shouldBe Some("a")
+
+  test("a table that registers again, like a restarted node, has no reservations"):
+    val small = TableRegistry(capacity = 1)
+    small.register("a", "h", 1, t0).value
+    reserve(small) shouldBe Some("a")
+    small.register("a", "h", 1, t0).value
+    reserve(small) shouldBe Some("a")
+
+  test("no seat is given twice when many players are assigned at the same time"):
+    register("table-1") // 7 seats
+    val threads  = 100
+    val pool     = Executors.newFixedThreadPool(threads)
+    val start    = CountDownLatch(1)
+    val assigned = ConcurrentLinkedQueue[String]()
+    (1 to threads).foreach: _ =>
+      pool.execute: () =>
+        start.await()
+        reserve().foreach(assigned.add)
+    start.countDown()
+    pool.shutdown()
+    pool.awaitTermination(10, TimeUnit.SECONDS) shouldBe true
+    assigned.size shouldBe Capacity

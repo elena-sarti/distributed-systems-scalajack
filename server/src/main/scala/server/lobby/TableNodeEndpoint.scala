@@ -35,7 +35,7 @@ abstract class TableNodeEndpoint[Request: ReadWriter](operation: String) extends
 final class TableRegistrationEndpoint(registry: TableRegistry) extends TableNodeEndpoint[TableRegistration]("Table registration"):
   protected def execute(request: TableRegistration): Either[RegistryError, TableInfo] =
     registry.register(request.id, request.host, request.wsPort).tap: result =>
-      result.foreach(table => println(s"Table ${table.id} registered at ${table.host}:${table.wsPort}"))
+      result.foreach(table => System.out.println(s"Table ${table.id} registered at ${table.host}:${table.wsPort}"))
 
 /** `POST /tables/heartbeat`: a table node says it is alive and how many seats are free. */
 final class TableHeartbeatEndpoint(registry: TableRegistry) extends TableNodeEndpoint[TableHeartbeat]("Table heartbeat"):
