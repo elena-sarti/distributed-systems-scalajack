@@ -2,6 +2,7 @@ package server.lobby
 
 import utils.TestExports.*
 import java.time.{Duration, Instant}
+import java.util.concurrent.{CompletableFuture, CountDownLatch, TimeUnit}
 import scala.collection.mutable.ListBuffer
 
 class TableDispatcherTest extends AnyFunSuite with BeforeAndAfterEach:
@@ -119,3 +120,24 @@ class TableDispatcherTest extends AnyFunSuite with BeforeAndAfterEach:
     assignedTo(dispatcher.assign()) shouldBe None
     now = t0.plus(seatHold).plusSeconds(1)
     assignedTo(dispatcher.assign()) shouldBe Some("table-1")
+
+  test("while Docker is starting a node, the other players get their answer at once, without waiting for it"):
+    registerTable("table-1")
+    fillAll()
+    val dockerCalled = CountDownLatch(1)
+    val dockerDone   = CountDownLatch(1)
+    val slowDocker = new TableProvisioner:
+      def start(tableId: String): Boolean =
+        dockerCalled.countDown()
+        dockerDone.await(5, TimeUnit.SECONDS) // Docker takes its time
+        true
+    val slowDispatcher = TableDispatcher(registry, slowDocker, Seq("table-1", "table-2"), seatHold, startTimeout, () => now)
+    val first = CompletableFuture.supplyAsync(() => slowDispatcher.assign())
+    dockerCalled.await(5, TimeUnit.SECONDS) shouldBe true // the first request is now waiting for Docker
+    try
+      val asked = System.nanoTime()
+      slowDispatcher.assign() shouldBe Assignment.Starting("table-2")
+      ((System.nanoTime() - asked) / 1_000_000 < 1000) shouldBe true
+    finally dockerDone.countDown()
+    first.get(5, TimeUnit.SECONDS) shouldBe Assignment.Starting("table-2")
+

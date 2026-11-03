@@ -16,9 +16,13 @@ enum Assignment:
 /** Decides to which table each player goes: the first with a free seat; if there is none, it starts a new
  * node, as long as the maximum number of tables is not reached; beyond that, "full".
  *
- * Every request is handled one at a time (`synchronized`): the lobby has few requests, and this way
- * "look for a seat, else start a node" cannot be done twice for the same need. The seats themselves are
- * promised by the registry, which is atomic also against the heartbeats that arrive meanwhile.
+ * The decision is taken one request at a time (`synchronized`), so "look for a seat, else start a node"
+ * cannot be done twice for the same need. The seats themselves are promised by the registry, which is
+ * atomic also against the heartbeats that arrive meanwhile.
+ *
+ * Docker is called outside the lock: it may take seconds, and in the meantime the other requests are
+ * answered at once ("starting"). Otherwise they would wait, holding the lobby's HTTP threads, which are
+ * the same ones that receive the heartbeats: a heartbeat answered late makes a healthy table look dead.
  *
  * @param pool         the ids of the tables that can exist, in the order they are started. Its size is the
  *                     maximum number of tables: nothing else is ever started.
@@ -35,28 +39,41 @@ final class TableDispatcher(registry: TableRegistry, provisioner: TableProvision
   /** The nodes asked to start that have not registered yet, and when they were asked. */
   private var starting = Map.empty[String, Instant]
 
-  def assign(): Assignment = synchronized:
+  def assign(): Assignment =
+    decide() match
+      case Left(answer)  => answer
+      case Right(nodeId) => launch(nodeId)
+
+  /** The answer, or the node that this request has to start. */
+  private def decide(): Either[Assignment, String] = synchronized:
     val now = clock()
     forgetArrivedOrLost(now)
-    registry.reserveSeat(now, seatHold).map(Assignment.Assigned(_)).getOrElse(startNode(now))
+    registry.reserveSeat(now, seatHold) match
+      case Some(table) => Left(Assignment.Assigned(table))
+      case None        => nodeToStart(now)
+
+  /** Asks for the node to be started, without holding the lock. */
+  private def launch(nodeId: String): Assignment =
+    if provisioner.start(nodeId) then Assignment.Starting(nodeId)
+    else
+      synchronized { starting = starting - nodeId } // not on its way after all: the next request tries again
+      Assignment.ActivationFailed(nodeId)
 
   /** A node that has registered is no longer starting (its seats are now in the registry); one that took
    * too long is forgotten, so that it can be asked again instead of blocking every new table. */
   private def forgetArrivedOrLost(now: Instant): Unit =
     starting = starting.filter((id, since) => registry.find(id).isEmpty && since.plus(startTimeout).isAfter(now))
 
-  private def startNode(now: Instant): Assignment =
+  private def nodeToStart(now: Instant): Either[Assignment, String] =
     starting.keys.minOption match
-      case Some(id) => Assignment.Starting(id) // one is already on its way: one is enough for now
+      case Some(id) => Left(Assignment.Starting(id)) // one is already on its way: one is enough for now
       case None =>
         // a table that is registered counts even if it is unavailable: its node exists, so it is not started again
         pool.find(id => registry.find(id).isEmpty) match
-          case None     => Assignment.Full
+          case None     => Left(Assignment.Full)
           case Some(id) =>
-            if provisioner.start(id) then
-              starting = starting.updated(id, now)
-              Assignment.Starting(id)
-            else Assignment.ActivationFailed(id)
+            starting = starting.updated(id, now) // marked before Docker is asked: meanwhile nobody starts it again
+            Right(id)
 
 object TableDispatcher:
   /** Long enough for a client to connect after being assigned, short enough not to lose a seat for long. */
