@@ -12,6 +12,7 @@ import java.time.Duration
  * @param tablePool the ids of the tables the lobby may start, in the order it starts them: how many they are
  *                  is the maximum number of tables. Used by the lobby.
  * @param dockerSocket the Unix socket of the Docker daemon, used by the lobby to start the tables.
+ * @param backupUrl where a table node finds its backup; without it the table is not replicated.
  */
 final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.DefaultWsPort,
                             tableId: String = NodeConfig.DefaultTableId,
@@ -20,7 +21,8 @@ final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.
                             publicWsPort: Option[Int] = None,
                             heartbeat: HeartbeatConfig = HeartbeatConfig.Default,
                             tablePool: Seq[String] = Seq.empty,
-                            dockerSocket: String = NodeConfig.DefaultDockerSocket):
+                            dockerSocket: String = NodeConfig.DefaultDockerSocket,
+                            backupUrl: Option[String] = None):
   /** The WebSocket port to hand out to the clients. */
   def advertisedWsPort: Int = publicWsPort.getOrElse(wsPort)
 
@@ -57,23 +59,24 @@ object NodeConfig:
       port    <- parsePort("NODE_PORT", env, DefaultPort)
       wsPort  <- parsePort("NODE_WS_PORT", env, DefaultWsPort)
       tableId  = env.get("TABLE_ID").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultTableId)
-      lobbyUrl <- parseLobbyUrl(env)
+      lobbyUrl <- parseUrl("LOBBY_URL", env)
       publicHost = env.get("TABLE_HOST").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultPublicHost)
       publicWsPort <- env.get("TABLE_PUBLIC_WS_PORT").fold[Either[String, Option[Int]]](Right(None))(_ => parsePort("TABLE_PUBLIC_WS_PORT", env, wsPort).map(Some(_)))
       heartbeat <- HeartbeatConfig.fromEnv(env)
       pool <- parsePool(env)
       dockerSocket = env.get("DOCKER_SOCKET").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultDockerSocket)
-    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat, pool, dockerSocket)
+      backupUrl <- parseUrl("BACKUP_URL", env)
+    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat, pool, dockerSocket, backupUrl)
 
   private def parsePort(name: String, env: Map[String, String], default: Int): Either[String, Int] =
     env.get(name).fold(Right(default)): s =>
       s.toIntOption.filter(p => p >= 1 && p <= 65535).toRight(s"Invalid $name '$s'")
 
-  /** Absent is fine (the node just does not announce itself); present, it must be an http(s) address. */
-  private def parseLobbyUrl(env: Map[String, String]): Either[String, Option[String]] =
-    env.get("LOBBY_URL").fold(Right(None)): raw =>
+  /** Absent is fine (e.g. the node just does not announce itself); present, it must be an http(s) address. */
+  private def parseUrl(name: String, env: Map[String, String]): Either[String, Option[String]] =
+    env.get(name).fold(Right(None)): raw =>
       val url = raw.trim
-      Either.cond(url.startsWith("http://") || url.startsWith("https://"), Some(url), s"Invalid LOBBY_URL '$raw'")
+      Either.cond(url.startsWith("http://") || url.startsWith("https://"), Some(url), s"Invalid $name '$raw'")
 
   /** A comma separated list of table ids. Absent means none; an empty item or a repetition is almost surely
    * a typo, and a wrong pool would only show when the lobby tries to start a node, so it is refused now. */

@@ -11,6 +11,9 @@ class NodeConfigTest extends AnyFunSuite:
   test("parses the table role, ignoring case and spaces"):
     NodeConfig.fromEnv(Map("NODE_ROLE" -> " Table ")) shouldBe Right(NodeConfig(NodeRole.Table, 8080))
 
+  test("parses the backup role"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "backup")) shouldBe Right(NodeConfig(NodeRole.Backup, 8080))
+
   test("uses the port from NODE_PORT when present"):
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "NODE_PORT" -> "9000")) shouldBe
       Right(NodeConfig(NodeRole.Lobby, 9000))
@@ -43,6 +46,12 @@ class NodeConfigTest extends AnyFunSuite:
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "table")).map(_.lobbyUrl) shouldBe Right(None)
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "LOBBY_URL" -> "http://lobby:8080")).map(_.lobbyUrl) shouldBe
       Right(Some("http://lobby:8080"))
+
+  test("a table node is replicated only if BACKUP_URL is set, and it must be an http or https address"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table")).map(_.backupUrl) shouldBe Right(None)
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "BACKUP_URL" -> "http://table-1-backup:8080")).map(_.backupUrl) shouldBe
+      Right(Some("http://table-1-backup:8080"))
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "table", "BACKUP_URL" -> "table-1-backup:8080")).isLeft shouldBe true
 
   test("LOBBY_URL must be an http or https address"):
     Seq("lobby:8080", "ftp://lobby", " ").foreach: url =>

@@ -75,10 +75,25 @@ services:
       <<: *table-environment
       TABLE_ID: table-1   # marks in the database the players sitting here: it must not change between restarts
       TABLE_PUBLIC_WS_PORT: "9091"   # the address the clients are given: the published port (below)
+      BACKUP_URL: http://table-1-backup:8080   # every change of the table is stored there before the players see it
     ports:
       - "9081:8080"   # health (HTTP)
       - "9091:8090"   # WebSocket
-    depends_on: *table-depends
+    depends_on:
+      <<: *table-depends
+      table-1-backup:   # without its backup the table cannot accept any move
+        condition: service_started
+
+  # The copy of table-1: it keeps the last state of the table and takes no players. It has the same
+  # environment as the other nodes, so that one day it can take the place of the table.
+  table-1-backup:
+    <<: *backend
+    container_name: table-1-backup
+    environment:
+      <<: *node-environment
+      NODE_ROLE: backup
+    ports:
+      - "9181:8080"   # health and replication (HTTP)
 
   table-2:
     <<: *backend

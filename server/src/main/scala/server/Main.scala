@@ -5,6 +5,7 @@ import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
 import server.lobby.{DockerTableProvisioner, HeartbeatMonitor, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
+import server.replication.{BackupReplica, HttpReplicator, ReplicaEndpoint, ReplicatedTable}
 import java.nio.file.Path
 import scala.util.control.NonFatal
 
@@ -16,12 +17,15 @@ object Main:
         val tokens = sessionTokens() // the lobby issues the session tokens, the tables check them
         // the lobby owns the users: their table must exist before the node accepts anything
         val registry = TableRegistry() // only used by the lobby: the tables that announced themselves
-        val routes   = if config.role == NodeRole.Lobby then lobbyRoutes(prepareDatabase(), tokens, registry, tableDispatcher(config, registry)) else Map.empty
+        val routes   = config.role match
+          case NodeRole.Lobby  => lobbyRoutes(prepareDatabase(), tokens, registry, tableDispatcher(config, registry))
+          case NodeRole.Backup => Map(ReplicaEndpoint.Path -> ReplicaEndpoint(BackupReplica())) // keeps the last state sent by its table
+          case NodeRole.Table  => Map.empty
         // the lobby checks every period which tables have gone silent
         val monitor  = Option.when(config.role == NodeRole.Lobby)(silenceMonitor(registry, config.heartbeat))
         val health = HealthServer(config.role, config.port, routes)
         // a table node runs one table: its logic is driven by a single writer thread
-        val logic    = Option.when(config.role == NodeRole.Table)(tableLogic(config.tableId))
+        val logic    = Option.when(config.role == NodeRole.Table)(tableLogic(config))
         val table    = logic.map(SingleWriterHandler(_))
         val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
         // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
@@ -61,11 +65,16 @@ object Main:
     SessionTokens.fromEnv(sys.env).fold(error => fail(s"Invalid session configuration: $error"), identity)
 
   /** The table keeps the players' balances in the database. When it starts, nobody can be sitting at it:
-   * the players still marked there were left by a crash, and are freed. */
-  private def tableLogic(tableId: String): TableHandler =
+   * the players still marked there were left by a crash, and are freed. With a backup, every change of the
+   * table is stored there before the players see it. */
+  private def tableLogic(config: NodeConfig): SessionHandler & SeatAvailability =
     val balances = PostgresBalanceRepository(prepareDatabase())
-    balances.releaseTable(tableId)
-    TableHandler(cashier = DatabaseCashier(balances, tableId))
+    balances.releaseTable(config.tableId)
+    val cashier = DatabaseCashier(balances, config.tableId)
+    config.backupUrl match
+      case None      => TableHandler(cashier = cashier)
+      // the start time orders the primaries: a node that starts again is newer than the one that crashed
+      case Some(url) => ReplicatedTable(cashier, HttpReplicator(url), epoch = System.currentTimeMillis())
 
   /** Checks every heartbeat period which tables have not been heard from within the timeout. */
   private def silenceMonitor(registry: TableRegistry, heartbeat: HeartbeatConfig): PeriodicTask =

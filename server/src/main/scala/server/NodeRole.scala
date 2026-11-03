@@ -1,7 +1,7 @@
 package server
 
 enum NodeRole:
-  case Lobby, Table
+  case Lobby, Table, Backup
 
 
 //Either[String, NodeRole]: come Option[A] ha come cases Just(a) e None, Either ha Left(error) e Right(nodeRole), dove error è di tipo
@@ -12,4 +12,5 @@ object NodeRole:
     raw.trim.toLowerCase match
       case "lobby" => Right(Lobby)
       case "table" => Right(Table)
-      case other   => Left(s"Unknown role '$other' (expected: lobby | table)")
+      case "backup" => Right(Backup)
+      case other   => Left(s"Unknown role '$other' (expected: lobby | table | backup)")
