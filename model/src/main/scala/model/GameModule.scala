@@ -334,13 +334,28 @@ object GameModule:
 
     def apply(players: List[Player], deck: Deck): Game = GameImpl(players, List.empty, deck)
 
+    /** Rebuilds a game in the middle of a hand from its parts, e.g. on a replica that takes over a table.
+     *
+     * @param players       the players, with their cards, balances and states, in turn order.
+     * @param deck          the cards still to be dealt.
+     * @param bets          the bets of the current hand.
+     * @param dealerCards   the dealer's cards, the face-down one included.
+     * @param cutCardInDeck whether the cut card has still to come out.
+     */
+    def restore(players: List[Player], deck: Deck, bets: List[Bet], dealerCards: List[StandardCard],
+                cutCardInDeck: Boolean): Game =
+      val game = GameImpl(players, bets, deck, cutCardInDeck)
+      dealerCards.foreach(game.dealer.addCard)
+      game
+
     private class GameImpl(private var currentPlayers: List[Player],
                            override var currentBets: List[Bet],
-                           private var currentDeck: Deck) extends Game:
+                           private var currentDeck: Deck,
+                           initialCutCardInDeck: Boolean = true) extends Game:
 
       private val BlackjackPayoutMultiplier = 2.5
       private val gameDealer: Dealer = Dealer()
-      private var cutCardInDeck: Boolean = true
+      private var cutCardInDeck: Boolean = initialCutCardInDeck
       private var cutCardMessageShown: Boolean = false
 
       override def players: List[Player] = currentPlayers

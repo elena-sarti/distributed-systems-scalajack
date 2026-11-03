@@ -116,6 +116,9 @@ object DeckModule:
 
     /** Builds a deck from an explicit sequence of cards, useful for tests */
     def testDeck(cards: Card*): Deck = cards.toList
+
+    /** The deck made of exactly these cards, in this order (e.g. a deck that was saved). */
+    def fromCards(cards: List[Card]): Deck = cards
     
   extension (d: Deck)
 

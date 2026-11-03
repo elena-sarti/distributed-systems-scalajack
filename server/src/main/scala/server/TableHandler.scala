@@ -3,6 +3,7 @@ package server
 import protocol.{ClientMessage, Decision, ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.ServerMessage.*
+import server.replication.{GameSnapshots, PhaseSnapshot, SeatSnapshot, TableSnapshot}
 import utils.ModelExports.*
 import java.time.Instant
 import scala.concurrent.duration.*
@@ -57,6 +58,49 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
 
   /** When the wait for the current decision runs out, if the table is waiting for one (see [[enter]]). */
   private var deadline: Option[Instant] = None
+
+  /** Everything needed to rebuild this table elsewhere (see [[TableSnapshot]]). */
+  def snapshot: TableSnapshot =
+    val seated = seats.values.map(seat => seat.player.name -> seat.connected).toMap
+    val phaseNow = phase match
+      case Phase.Idle                          => PhaseSnapshot.Idle
+      case Phase.Betting                       => PhaseSnapshot.Betting
+      case Phase.Insurance(awaiting, accepted) => PhaseSnapshot.Insurance(awaiting.toList.sorted, accepted)
+      case Phase.Turn(hand)                    => PhaseSnapshot.Turn(hand.name)
+      case Phase.DealerTurn                    => PhaseSnapshot.DealerTurn
+    TableSnapshot(
+      version       = version,
+      hands         = GameSnapshots.hands(game),
+      bets          = GameSnapshots.bets(game),
+      dealerCards   = game.dealer.cards,
+      deck          = GameSnapshots.deck(game),
+      cutCardInDeck = game.isCutCardInDeck,
+      seats         = game.players.flatMap(p => seated.get(p.name).map(SeatSnapshot(p.name, _))), // in turn order
+      phase         = phaseNow,
+      deadline      = deadline.map(_.toEpochMilli)
+    )
+
+  /** Takes the state described by the snapshot, in place of the current one.
+   *
+   * @param connectionOf the connection of a seated player, if there is one on this node (e.g. when the table goes
+   *                     back to an earlier state). A player without one keeps the seat, but nothing reaches them until
+   *                     their client comes back.
+   */
+  def restore(snapshot: TableSnapshot, connectionOf: String => Option[Connection] = _ => None): Unit =
+    game = GameSnapshots.rebuild(snapshot)
+    val players = game.players.map(p => p.name -> p).toMap
+    val restoredSeats = snapshot.seats.map: seat =>
+      val connection = connectionOf(seat.player).getOrElse(Absent(seat.player))
+      connection.id -> Seat(connection, players(seat.player), seat.connected)
+    seats = restoredSeats.toMap
+    phase = snapshot.phase match
+      case PhaseSnapshot.Idle                          => Phase.Idle
+      case PhaseSnapshot.Betting                       => Phase.Betting
+      case PhaseSnapshot.Insurance(awaiting, accepted) => Phase.Insurance(awaiting.toSet, accepted)
+      case PhaseSnapshot.Turn(hand)                    => Phase.Turn(players(hand))
+      case PhaseSnapshot.DealerTurn                    => Phase.DealerTurn
+    version = snapshot.version
+    deadline = snapshot.deadline.map(Instant.ofEpochMilli)
 
   def onConnected(connection: Connection): Unit = () // nothing to do until the client asks to join
 
@@ -430,6 +474,11 @@ object TableHandler:
     case Insurance(awaiting: Set[String], accepted: List[String]) // dealer shows an ace: waiting for these players' answers
     case Turn(player: Player) // cards dealt: waiting for the action of this player
     case DealerTurn           // every player has played: the dealer plays and the bets are settled
+
+  /** Stands in for the connection of a seated player whose client is not connected to this node: messages are dropped. */
+  private final case class Absent(player: String) extends Connection:
+    val id: String = s"absent:$player"
+    def send(message: ServerMessage): Unit = ()
 
   /** A seated player and the connection of its client. After a disconnection during a hand the seat is kept
    * until the end of the hand with `connected = false`: nothing is sent to it any more. */

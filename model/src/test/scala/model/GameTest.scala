@@ -686,3 +686,19 @@ class GameTest extends AnyFunSuite with BeforeAndAfterEach:
     val expectedBalance = firstPlayer.balance.totalValue
     testGame.handlePayout() // crediting 0 used to fail
     firstPlayer.balance.totalValue shouldBe expectedBalance
+
+  test("a restored game goes on from the given players, bets, dealer's cards and deck"):
+    firstPlayer.addCard(ten)
+    val bet = Bet(firstPlayer, betAmount)
+    val restored = Game.restore(List(firstPlayer), Deck.testDeck(six, CutCard, king), List(bet), List(ace, hiddenCard),
+      cutCardInDeck = true)
+    restored.players shouldBe List(firstPlayer)
+    restored.currentBets shouldBe List(bet)
+    restored.dealer.cards shouldBe List(ace, hiddenCard)
+    restored.drawCard(firstPlayer) shouldBe Some(six)
+    restored.drawCard(firstPlayer) shouldBe Some(king) // the cut card comes out and is put aside
+    restored.isCutCardInDeck shouldBe false
+
+  test("a game restored after the cut card came out is over at the end of the hand"):
+    val restored = Game.restore(List(firstPlayer), Deck.testDeck(six), List.empty, List.empty, cutCardInDeck = false)
+    restored.isOver shouldBe true
