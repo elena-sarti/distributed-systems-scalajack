@@ -80,6 +80,9 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
       deadline      = deadline.map(_.toEpochMilli)
     )
 
+  /** The connection of every seated player, by name: with it [[restore]] can put the table back as it is now. */
+  def connections: Map[String, Connection] = seats.values.map(seat => seat.player.name -> seat.connection).toMap
+
   /** Takes the state described by the snapshot, in place of the current one.
    *
    * @param connectionOf the connection of a seated player, if there is one on this node (e.g. when the table goes

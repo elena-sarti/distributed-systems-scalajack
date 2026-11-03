@@ -6,15 +6,17 @@ import protocol.LobbyApi.ApiError
 import upickle.default.ReadWriter
 import scala.util.control.NonFatal
 
-/** An HTTP endpoint of the lobby that takes a JSON body by POST and answers with a status and a JSON body.
+/** An HTTP endpoint of a node that takes a JSON body by POST and answers with a status and a JSON body.
  *
  * It refuses other methods (405) and bodies that are too large (413). If something breaks on our side
  * (e.g. the database is down) the client gets 500, and only the kind of error is logged: never the
- * request, which contains a password.
+ * request, which may contain a password.
  *
- * @param operation what the endpoint does, for the log (e.g. "Registration").
+ * @param operation    what the endpoint does, for the log (e.g. "Registration").
+ * @param maxBodyBytes the largest body accepted.
  */
-abstract class JsonPostEndpoint(operation: String) extends HttpHandler:
+abstract class JsonPostEndpoint(operation: String, maxBodyBytes: Int = JsonPostEndpoint.MaxBodyBytes)
+  extends HttpHandler:
   import JsonPostEndpoint.*
 
   /** Status and JSON body of the answer to a request body. */
@@ -38,8 +40,8 @@ abstract class JsonPostEndpoint(operation: String) extends HttpHandler:
       (405, json(ApiError(OnlyPost)))
     else
       // never read whole: at most one byte more than the limit, to know that it was exceeded
-      val bytes = exchange.getRequestBody.readNBytes(MaxBodyBytes + 1)
-      if bytes.length > MaxBodyBytes then (413, json(ApiError(TooLarge)))
+      val bytes = exchange.getRequestBody.readNBytes(maxBodyBytes + 1)
+      if bytes.length > maxBodyBytes then (413, json(ApiError(TooLarge)))
       else answer(String(bytes, "UTF-8"))
 
   private def respond(exchange: HttpExchange, status: Int, body: String): Unit =
