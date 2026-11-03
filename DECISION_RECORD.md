@@ -1,0 +1,114 @@
+# Decision record: table replication and the CAP theorem
+
+The choices that drive the replication of the tables' state: behaviour under partition (CP or AP), the promotion
+policy of the backup and the role of the lobby as arbiter. Each one comes with the alternatives that were discarded
+and the reason why.
+
+## Context
+
+Each table is a node that keeps the state of the hand in memory: cards, bets, turn, balances of the seated players.
+If the node goes down, the hand in progress is lost. To tolerate the failure of a node, each table has two replicas:
+a **primary**, which plays with the clients, and a **backup**, ready to take its place.
+
+With two copies of the state we must decide what happens when the replicas cannot talk to each other. By the CAP
+theorem, under a network partition a system has to choose between **consistency** (everybody sees the same state,
+possibly by not answering) and **availability** (it always answers, possibly with diverging states).
+
+The system already has a lobby that receives the tables' heartbeats and knows their status (the table registry), and
+that can act as a third party in the decisions.
+
+## Decision
+
+### 1. The table is CP
+
+The state of a table favours **consistency**: if a move cannot be replicated, the table refuses it and the hand is
+paused until the situation is clear.
+
+A blackjack hand has cards already shown and money already moved. Two primaries active at the same time
+(*split brain*) would deal different cards and pay different bets, and there is no sensible way to merge two
+diverging hands. A pause of a few seconds, on the other hand, is acceptable: the game goes at the pace of people
+thinking about their moves.
+
+### 2. Passive, synchronous replication
+
+- **Passive**: only the primary executes the moves; after every transition it sends the new state of the table to the
+  backup.
+- **Synchronous**: the primary considers a move confirmed only when the backup has acknowledged it, and only then
+  tells the clients and writes the balances to the database (*output commit*). Every state a player has seen therefore
+  exists on both replicas: after a failure of the primary no confirmed move is lost.
+
+The cost is one round trip on the local network per move (latency traded for consistency even without partitions),
+negligible compared with the pace of the game.
+
+### 3. The lobby is the arbiter
+
+Primary, backup and lobby form a group of three: a decision on the configuration of a table needs the agreement of at
+least two of them (a majority).
+
+- For every table the lobby keeps the current **configuration**: which node is the primary, which is the backup, and an
+  **epoch** number that grows at every change of configuration.
+- Every replication message carries the epoch of its sender; a node refuses the messages with an epoch older than its
+  own. The epoch works as a *fencing token*: a deposed primary can no longer get anything accepted.
+- No replica changes role on its own: promotions and exclusions are decided by the lobby.
+
+### 4. Promotion and exclusion policy
+
+| Situation | Who decides | Outcome |
+|---|---|---|
+| The lobby gets no heartbeat from the primary within the timeout, **and** the up-to-date backup receives nothing more from the primary | lobby and backup | the backup becomes primary, epoch + 1; the clients are redirected to the new primary |
+| The lobby does not hear the primary, but the backup keeps receiving its replication (partition between primary and lobby) | no change | the primary is alive and replicating: the table goes on, the lobby waits for the primary to be reachable again |
+| The backup does not answer the primary, and the lobby does not hear it either | lobby and primary | the primary goes on alone, epoch + 1, in degraded mode until a new backup is brought up to date |
+| The backup does not answer the primary, but the lobby hears it (partition between the two replicas) | lobby and primary | the primary goes on, because it has the last confirmed state; the backup is excluded and must be brought up to date again |
+| The primary reaches neither the backup nor the lobby | nobody | the primary refuses the moves: the table is paused (the CP choice) |
+| The lobby is unreachable but primary and backup talk to each other | no change | the table goes on as usual: the lobby takes no part in the single moves |
+
+In every row that changes the configuration, two participants out of three agree that the third one is unreachable:
+that is the majority rule.
+
+The backup can be promoted only if it was up to date with the latest epoch: an excluded backup, or one not yet
+brought up to date, cannot become primary, because it does not have all the confirmed moves.
+
+## Discarded alternatives
+
+**AP (keep going on both replicas during a partition and reconcile afterwards).**
+Discarded: there is no correct reconciliation of two diverging blackjack hands (cards already shown, bets already
+paid). Accepting moves during the partition would mean undoing plays and payments afterwards.
+
+**Asynchronous replication (the primary answers the clients at once and updates the backup later).**
+Discarded: it is faster, but when the primary fails the last moves seen by the players might not have reached the
+backup, which would resume the hand from an earlier state. It contradicts the requirement "the state of the backup
+matches the primary's after every move".
+
+**Active replication (both replicas execute the same moves).**
+Discarded: the table is not deterministic. The deck is shuffled at random and the timeouts depend on each node's
+clock, so the two replicas would diverge. Making them deterministic (a shared seed for the deck, timeouts turned into
+messages) is possible, but more complex than transferring the state, which for a table is small.
+
+**Automatic promotion of the backup when the primary's heartbeats stop, without an arbiter.**
+Discarded: the backup cannot tell a crashed primary from a broken link between the two. During a partition there would
+be two active primaries (*split brain*), exactly the divergence the CP choice wants to avoid.
+
+**Full consensus (Raft/Paxos) on three or more replicas per table.**
+Discarded: it is the most general solution, but it needs at least three nodes per table and a consensus algorithm to
+implement and verify. Using the lobby as the third vote gives a majority with only two replicas per table, and there is
+a single lobby for all the tables.
+
+**Table state in the database (stateless tables).**
+Discarded: every move would become a database write, so the database would be the bottleneck and the single point of
+failure of every game. It would also still be necessary to make sure that a single node at a time writes the state of
+a table.
+
+## Consequences
+
+- During a partition or a failure a table may stop for a few seconds: detection (heartbeat timeout), promotion and
+  reconnection of the clients. That is the price of consistency.
+- The lobby becomes necessary for configuration changes: if the lobby is down and a replica fails too, the table stays
+  paused until the lobby is back. The lobby is not replicated: it remains a single point of failure for entering the
+  tables and for the failover, but not for the hands in progress between two healthy replicas.
+- When the clients lose the connection with the primary, they ask the lobby where the table is now and reconnect to the
+  new primary with the same session token.
+- The logical table keeps the same id after the failover, so the "sitting at this table" marks in the database stay
+  valid. The new primary must therefore not free the players at start-up, as a table that starts from scratch does.
+- Only the primary of the current epoch writes the balances to the database, and only for transitions already
+  confirmed by the backup.
+- An excluded replica can come back only after receiving the whole state from the current primary (resynchronisation).
