@@ -6,6 +6,8 @@ import server.{Cashier, TableHandler}
 object TableTakeover:
 
   /** The table as it was at the last state the backup stored, with every player treated as disconnected.
+   * If no cards had been dealt yet the hand is simply cancelled: the bets go back to the players, who are not
+   * to blame for the failure, and they leave with all their money.
    *
    * The clients were connected to the failed primary, so none of them is here: they get the same treatment as a client
    * that drops during a hand (C5). Their hands stand by themselves, the hand is settled without waiting for anybody,
@@ -21,5 +23,7 @@ object TableTakeover:
     val table = TableHandler(cashier = cashier)
     snapshot.foreach: state =>
       table.restore(state)
-      table.connections.values.toList.foreach(table.onDisconnected)
+      state.phase match
+        case PhaseSnapshot.Idle | PhaseSnapshot.Betting => table.onStop()
+        case _ => table.connections.values.toList.foreach(table.onDisconnected)
     table

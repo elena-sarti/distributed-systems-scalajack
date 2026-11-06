@@ -13,11 +13,12 @@ class TableTakeoverTest extends AnyFunSuite:
   private final class FakeConnection(val id: String) extends Connection:
     def send(message: ServerMessage): Unit = ()
 
-  /** Remembers who is given their money back. */
+  /** Remembers who is given their money back, and how much. */
   private final class RecordingCashier extends Cashier:
-    val returned = ListBuffer[String]()
+    val balances = ListBuffer[(String, Double)]()
+    def returned: List[String] = balances.map(_._1).toList
     def sitDown(username: String): Either[String, Double] = Right(TableHandler.DefaultBalance)
-    def standUp(username: String, balance: Double): Unit = returned += username
+    def standUp(username: String, balance: Double): Unit = balances += username -> balance
 
   private def card(value: Value): StandardCard = StandardCard(Suit.Diamonds, value)
 
@@ -39,6 +40,11 @@ class TableTakeoverTest extends AnyFunSuite:
     val table   = TableTakeover.resume(Some(stateAfter()), cashier)
     cashier.returned.toSet shouldBe Set("Alice", "Bob")
     table.freeSeats shouldBe Game.MaxPlayersNum
+
+  test("a bet placed before the cards are dealt goes back to the player"):
+    val cashier = RecordingCashier()
+    TableTakeover.resume(Some(stateAfter("Alice" -> PlaceBet(10))), cashier) // Bob has not bet yet
+    cashier.balances.toSet shouldBe Set("Alice" -> TableHandler.DefaultBalance, "Bob" -> TableHandler.DefaultBalance)
 
   test("a hand in progress is settled without waiting for anybody, and then the seats are free"):
     val cashier = RecordingCashier()

@@ -151,7 +151,8 @@ Choices worth knowing:
 - **The players of the failed primary are treated as disconnected** (as in C5): their hands stand, the hand is settled
   without waiting, each seat is freed at the end of the hand and the balance is saved. This keeps the database
   consistent (nobody stays marked as sitting at a table nobody plays at). Resuming the hand for a client that comes back
-  is F7.
+  is F7. If the cards had not been dealt yet, the hand is cancelled instead and the bets go back to the players: they
+  are not to blame for the failure.
 - The promoted node does **not** release the players at start-up, unlike a fresh table.
 - **Not covered yet:** a primary that comes back after the promotion (restart or healed partition) is not fenced by the
   lobby: it would register again and replace the entry. Its table would also release the players at start-up. F5
