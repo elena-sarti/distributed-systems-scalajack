@@ -32,6 +32,8 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   // Changed by the liveness thread when the lobby lets the table go on without its backup, read by the writer.
   @volatile private var epochNow = epoch
   @volatile private var alone    = false
+  // Set by the liveness thread when the backup answers again; the writer brings it up to date at the next event.
+  @volatile private var backupIsBack = false
 
   def freeSeats: Int = table.freeSeats
 
@@ -46,6 +48,11 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   def goOnAlone(newEpoch: Long): Unit =
     epochNow = newEpoch // before the flag: whoever sees the table alone also sees its new epoch
     alone = true
+
+  /** The backup answers again (see [[BackupExcluder]]). At the next event, before it, the table sends it its whole
+   * state: if the backup stores it, from then on every move waits for the backup again. If not, the table stays alone
+   * and can be asked again. */
+  def takeBackupBack(): Unit = backupIsBack = true
 
   def onConnected(connection: Connection): Unit =
     replicated(None)(table.onConnected(held.connection(connection)))
@@ -63,6 +70,7 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
     held.release()
 
   private def replicated(sender: Option[Connection])(event: => Unit): Unit =
+    if alone && backupIsBack then resynchronise()
     val before      = table.snapshot
     val connections = table.connections
     event
@@ -71,6 +79,14 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
       held.discard()
       table.restore(before, connections.get)
       sender.foreach(_.send(ErrorMessage(TablePaused)))
+
+  /** The backup was left behind while the table played alone: the current state is all it needs, since it replaces
+   * whatever the backup had. Once stored, the backup has every move again, so it can again take over if needed. */
+  private def resynchronise(): Unit =
+    backupIsBack = false
+    if replicate() then
+      alone = false
+      System.out.println(s"The backup has the whole table again (epoch $epochNow): every move waits for it again")
 
   private def replicate(): Boolean =
     sequence += 1

@@ -128,3 +128,23 @@ class PartitionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
     toLobby.up = true // the partition heals
     period(lobbyHearsPrimary = true)
     primary.isAlone shouldBe false // its epoch has been used by the promotion
+
+  test("when the replicas see each other again the backup gets the whole state, and can again take over if the primary fails"):
+    aliceSeated()
+    link.up = false
+    afterTheTimeout()
+    period(lobbyHearsPrimary = true)
+    primary.isAlone shouldBe true
+    link.up = true // the partition heals: the heartbeats of the primary, with its new epoch, reach the backup again
+    primarySees.heardFrom(Peer.Backup)
+    backupSees.heardFrom(Peer.Primary)
+    period(lobbyHearsPrimary = true)
+    primary.onTick()
+    primary.isAlone shouldBe false
+    replica.latest.map(_.epoch) shouldBe Some(11L)
+    now = now.plus(timeout).plusSeconds(1) // now the primary crashes: it asks nobody for anything any more
+    toLobby.up = false
+    period(lobbyHearsPrimary = false)
+    period(lobbyHearsPrimary = false)
+    takenOver.toList shouldBe List(12L)
+

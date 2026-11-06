@@ -164,3 +164,29 @@ class ReplicatedTableTest extends AnyFunSuite with BeforeAndAfterEach:
     primary.onMessage(alice, LeaveTable)
     log.toList shouldBe List("saved Alice")
 
+  test("a table playing alone that takes its backup back sends it the whole state, then waits for it again"):
+    val alice = join("Alice")
+    replicator.available = false
+    primary.goOnAlone(2)
+    primary.onMessage(alice, PlaceBet(10)) // played while the backup was out: it does not have it
+    replicator.available = true
+    primary.takeBackupBack()
+    primary.onTick() // the next event, whatever it is
+    primary.isAlone shouldBe false
+    backup.latest.get.epoch shouldBe 2
+    backupState shouldBe table.snapshot
+    replicator.available = false
+    val before = table.snapshot
+    primary.onMessage(alice, Stand) // the moves wait for the backup again
+    table.snapshot shouldBe before
+    alice.inbox.last shouldBe ErrorMessage(ReplicatedTable.TablePaused)
+
+  test("if the backup does not take the state the table goes on alone"):
+    val alice = join("Alice")
+    replicator.available = false
+    primary.goOnAlone(2)
+    primary.takeBackupBack()
+    primary.onMessage(alice, PlaceBet(10))
+    primary.isAlone shouldBe true
+    alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe true
+

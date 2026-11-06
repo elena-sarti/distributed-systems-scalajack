@@ -179,3 +179,16 @@ Promotions and exclusions share the epochs kept by the lobby (`PromotionArbiter`
 - A primary cut off from the backup **and** from the lobby (row 5) stays paused; if in the meantime the backup has been
   promoted, the epoch the primary would ask for has already been used, so it can never go on alone.
 
+### The excluded backup comes back: resynchronisation
+
+The primary in degraded mode keeps sending its heartbeats to the backup, with its new epoch. The backup accepts them,
+because the epoch is newer than its own, and answers. When the primary hears it again it takes it back
+(`BackupExcluder`): at the next event of the table it sends the whole current state, and if the backup stores it the
+table waits for the backup at every move again. If it does not, the table stays alone and tries again at the next
+period.
+
+No agreement of the lobby is needed for this: the whole state replaces whatever the backup had, and from that moment the
+backup holds the current epoch, which is exactly what makes it eligible again for a promotion (its request carries the
+current epoch + 1). If the two replicas lose each other again, the same race of the previous section starts, one epoch
+higher.
+
