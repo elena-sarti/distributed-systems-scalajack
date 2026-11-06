@@ -158,3 +158,24 @@ Choices worth knowing:
   lobby: it would register again and replace the entry. Its table would also release the players at start-up. F5
   (alignment on recovery) must close this, e.g. with the epoch in the registration and in the heartbeats.
 - Worst-case time to the new primary: timeout + one period for the lobby to notice + one period for the retry.
+
+## Behaviour under partition (F5)
+
+### The backup cannot be reached: the primary goes on alone
+
+Rows 3 and 4 of the promotion table. While the backup does not acknowledge, every move is undone and the players are
+asked to try again (F2): the table is paused. When the primary suspects its backup (F3), at every period it asks the
+lobby `POST /tables/exclude-backup` with `epoch = its epoch + 1` (`BackupExcluder`). The lobby grants it if the epoch
+is newer than the current one for the table: the primary, which asks, and the lobby, which hears it, are two of
+three. From then on the table plays without waiting for the backup (degraded mode), with the new epoch.
+
+Promotions and exclusions share the epochs kept by the lobby (`PromotionArbiter`), and this decides every race:
+
+- When the two replicas lose each other, the backup asks for the promotion and the primary for the exclusion, both
+  with the epoch of the primary + 1: at most one of the two can win. While the lobby hears the primary only the
+  exclusion can win.
+- An excluded backup still has the old epoch, so it can no longer be promoted, not even if the primary fails
+  afterwards: it does not have the moves played since the exclusion.
+- A primary cut off from the backup **and** from the lobby (row 5) stays paused; if in the meantime the backup has been
+  promoted, the epoch the primary would ask for has already been used, so it can never go on alone.
+

@@ -59,3 +59,31 @@ class PromotionArbiterTest extends AnyFunSuite with BeforeAndAfterEach:
     threads.foreach(_.start())
     threads.foreach(_.join())
     results.toArray.count(_.isInstanceOf[PromotionDecision.Granted]) shouldBe 1
+
+  test("a primary that cannot reach its backup is let go on alone with a newer epoch, while the lobby hears it"):
+    arbiter.exclude("table-1", 5) shouldBe PromotionDecision.Granted(5)
+    granted shouldBe empty // nobody has been promoted
+
+  test("a primary that has been replaced is not let go on alone"):
+    primaryIsSilent()
+    arbiter.decide("table-1", 5) // the backup has taken its place with the epoch that follows the primary's
+    arbiter.exclude("table-1", 5) shouldBe PromotionDecision.StaleEpoch(5)
+
+  test("once the backup is out it can no longer be promoted, not even if the primary then goes silent"):
+    arbiter.exclude("table-1", 5)
+    primaryIsSilent()
+    arbiter.decide("table-1", 5) shouldBe PromotionDecision.StaleEpoch(5) // it still has the epoch before the exclusion
+    granted shouldBe empty
+
+  test("the backup of a table the lobby does not know cannot be excluded"):
+    arbiter.exclude("ghost", 5) shouldBe PromotionDecision.UnknownTable
+
+  test("backup and primary cut off from each other ask at the same moment: exactly one of them wins"):
+    primaryIsSilent() // the worst case: the lobby would also grant the promotion
+    val results = java.util.concurrent.ConcurrentLinkedQueue[PromotionDecision]()
+    val promote: Runnable = () => { results.add(arbiter.decide("table-1", 5)); () }
+    val exclude: Runnable = () => { results.add(arbiter.exclude("table-1", 5)); () }
+    val threads = (1 to 4).flatMap(_ => List(Thread(promote), Thread(exclude)))
+    threads.foreach(_.start())
+    threads.foreach(_.join())
+    results.toArray.count(_.isInstanceOf[PromotionDecision.Granted]) shouldBe 1

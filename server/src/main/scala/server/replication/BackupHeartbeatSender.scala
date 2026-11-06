@@ -6,8 +6,9 @@ import server.liveness.{FailureDetector, Peer}
  * heartbeat and, if the backup answers, tells the detector. `tick` must be called by one thread at a time (see
  * `PeriodicTask`).
  *
- * @param epoch the epoch of this primary, sent in every heartbeat.
+ * @param epoch the epoch of this primary, sent in every heartbeat. Read at every tick: it grows when the primary
+ *              goes on without its backup.
  */
-final class BackupHeartbeatSender(backup: BackupHeartbeats, epoch: Long, detector: FailureDetector[Peer]):
+final class BackupHeartbeatSender(backup: BackupHeartbeats, epoch: => Long, detector: FailureDetector[Peer]):
   def tick(): Unit =
     if backup.heartbeat(epoch) then detector.heardFrom(Peer.Backup) // no answer: the detector will notice the silence

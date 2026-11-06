@@ -32,6 +32,11 @@ object LobbyApi:
    * is not silent for it too, or the epoch is not newer than the last promotion), by 404 if the table is unknown. */
   val PromotionPath = "/tables/promote"
 
+  /** `POST` an [[ExclusionRequest]] (a primary that cannot reach its backup asking to go on without it): answered by
+   * 200 and an [[ExclusionGranted]], by 409 and an [[ApiError]] if the epoch is not newer than the current one (this
+   * primary has been replaced), by 404 if the table is unknown. */
+  val ExclusionPath = "/tables/exclude-backup"
+
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
@@ -71,6 +76,12 @@ object LobbyApi:
 
   /** The lobby agrees: from now on `epoch` is the current one for the table. */
   final case class PromotionGranted(tableId: String, epoch: Long) derives ReadWriter
+
+  /** The primary of `tableId` asks to go on without its backup with `epoch`, greater than its own. */
+  final case class ExclusionRequest(tableId: String, epoch: Long) derives ReadWriter
+
+  /** The lobby agrees: the backup is out, and `epoch` is the current one for the table. */
+  final case class ExclusionGranted(tableId: String, epoch: Long) derives ReadWriter
 
   /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
   final case class AssignRequest(token: String) derives ReadWriter:

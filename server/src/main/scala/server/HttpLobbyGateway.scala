@@ -1,7 +1,7 @@
 package server
 
 import protocol.LobbyApi
-import protocol.LobbyApi.{BackupHeartbeat, PromotionRequest, TableHeartbeat, TableRegistration}
+import protocol.LobbyApi.{BackupHeartbeat, ExclusionRequest, PromotionRequest, TableHeartbeat, TableRegistration}
 import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -14,7 +14,7 @@ import scala.util.control.NonFatal
  * @param timeout how long to wait to connect and to get an answer: a lobby that does not answer must not
  *                block the table's heartbeat thread for long.
  */
-final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSeconds(2)) extends LobbyGateway, PromotionGateway:
+final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSeconds(2)) extends LobbyGateway, PromotionGateway, ExclusionGateway:
   private val http = HttpClient.newBuilder().connectTimeout(timeout).build()
 
   def register(id: String, host: String, wsPort: Int): Boolean =
@@ -31,10 +31,15 @@ final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSec
     toResult(post(LobbyApi.BackupHeartbeatPath, BackupHeartbeat(tableId)))
 
   def requestPromotion(tableId: String, epoch: Long): PromotionAnswer =
-    post(LobbyApi.PromotionPath, PromotionRequest(tableId, epoch)) match
-      case Some(200)  => PromotionAnswer.Granted
-      case Some(code) => PromotionAnswer.Denied(code)
-      case None       => PromotionAnswer.Unreachable
+    toAnswer(post(LobbyApi.PromotionPath, PromotionRequest(tableId, epoch)))
+
+  def requestExclusion(tableId: String, epoch: Long): PromotionAnswer =
+    toAnswer(post(LobbyApi.ExclusionPath, ExclusionRequest(tableId, epoch)))
+
+  private def toAnswer(status: Option[Int]): PromotionAnswer = status match
+    case Some(200)  => PromotionAnswer.Granted
+    case Some(code) => PromotionAnswer.Denied(code)
+    case None       => PromotionAnswer.Unreachable
 
   /** What the status of a heartbeat's answer means for the node (shared by the two kinds of heartbeat). */
   private def toResult(status: Option[Int]): HeartbeatResult = status match

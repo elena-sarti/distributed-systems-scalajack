@@ -1,9 +1,10 @@
 package server.lobby
 
-/** What the lobby decides about a backup that asks to take the place of its primary. */
+/** What the lobby decides about a replica that asks to change the configuration of its table. */
 enum PromotionDecision:
   case Granted(epoch: Long)
-  /** The lobby still hears the primary: the table is not abandoned, the backup is the one that cannot reach it. */
+  /** The lobby still hears the primary: the table is not abandoned, the backup is the one that cannot reach it
+   * (only for a promotion). */
   case PrimaryAlive
   /** The epoch asked for is not newer than the last one granted for this table. */
   case StaleEpoch(current: Long)
@@ -30,14 +31,28 @@ final class PromotionArbiter(registry: TableRegistry, onGranted: String => Unit 
       case _                            => ()
     decision
 
+  /** The primary cannot reach its backup and asks to go on alone (rows 3 and 4 of the decision record): the primary,
+   * which is asking, and the lobby, which hears it, are two of three. Granted when the epoch is newer than the current
+   * one. The epochs are the same as for the promotions, so a promotion and an exclusion asked for at the same time
+   * cannot both win: the backup and the primary ask with the same epoch, the epoch of the primary plus one. A primary
+   * that has already been replaced is refused for the same reason. And once the backup is out, it still has the old
+   * epoch: it can no longer be promoted, since it does not have the moves played from now on. */
+  def exclude(tableId: String, epoch: Long): PromotionDecision = synchronized:
+    registry.find(tableId) match
+      case None    => PromotionDecision.UnknownTable
+      case Some(_) => advance(tableId, epoch)
+
   /** Check and record in one atomic step, so that two requests cannot both win. */
   private def judge(tableId: String, epoch: Long): PromotionDecision = synchronized:
     registry.find(tableId) match
       case None => PromotionDecision.UnknownTable
       case Some(table) if table.status != TableStatus.Unavailable => PromotionDecision.PrimaryAlive
-      case Some(_) =>
-        val current = epochs.getOrElse(tableId, 0L)
-        if epoch <= current then PromotionDecision.StaleEpoch(current)
-        else
-          epochs = epochs.updated(tableId, epoch)
-          PromotionDecision.Granted(epoch)
+      case Some(_) => advance(tableId, epoch)
+
+  /** The new epoch, if it is newer than the current one. Called with the lock held. */
+  private def advance(tableId: String, epoch: Long): PromotionDecision =
+    val current = epochs.getOrElse(tableId, 0L)
+    if epoch <= current then PromotionDecision.StaleEpoch(current)
+    else
+      epochs = epochs.updated(tableId, epoch)
+      PromotionDecision.Granted(epoch)

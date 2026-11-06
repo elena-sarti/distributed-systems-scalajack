@@ -19,6 +19,12 @@ class LobbyApiTest extends AnyFunSuite:
     val granted = PromotionGranted("table-1", 1_700_000_000_001L)
     LobbyApi.decode[PromotionGranted](LobbyApi.encode(granted)) shouldBe Right(granted)
 
+  test("the exclusion request and its answer survive a JSON round-trip"):
+    val request = ExclusionRequest("table-1", 1_700_000_000_001L)
+    LobbyApi.decode[ExclusionRequest](LobbyApi.encode(request)) shouldBe Right(request)
+    val granted = ExclusionGranted("table-1", 1_700_000_000_001L)
+    LobbyApi.decode[ExclusionGranted](LobbyApi.encode(granted)) shouldBe Right(granted)
+
   test("the answers survive a JSON round-trip"):
     LobbyApi.decode[Registered](LobbyApi.encode(Registered("Alice"))) shouldBe Right(Registered("Alice"))
     LobbyApi.decode[ApiError](LobbyApi.encode(ApiError("Username already taken"))) shouldBe Right(ApiError("Username already taken"))

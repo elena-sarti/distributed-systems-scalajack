@@ -144,3 +144,23 @@ class ReplicatedTableTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private def lastTableOf(connection: FakeConnection) =
     connection.inbox.collect { case TableUpdate(view) => view }.last
+
+  test("a table that goes on without its backup plays at once and sends nothing more to the backup"):
+    val alice = join("Alice")
+    replicator.available = false
+    primary.goOnAlone(2)
+    val sent = replicator.sent
+    primary.onMessage(alice, PlaceBet(10))
+    replicator.sent shouldBe sent
+    alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe true
+    primary.currentEpoch shouldBe 2
+    primary.isAlone shouldBe true
+
+  test("a balance is saved at once when the table plays alone"):
+    val alice = join("Alice")
+    replicator.available = false
+    primary.goOnAlone(2)
+    log.clear()
+    primary.onMessage(alice, LeaveTable)
+    log.toList shouldBe List("saved Alice")
+

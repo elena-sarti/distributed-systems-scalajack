@@ -3,10 +3,10 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.lobby.{BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
+import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
 import server.liveness.{FailureDetector, LoggingFailureListener, ObservedLobbyGateway, Peer}
-import server.replication.{BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
+import server.replication.{BackupExcluder, BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.util.control.NonFatal
@@ -48,8 +48,12 @@ object Main:
         val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
         // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
         val announcer = for seats <- logic; url <- config.lobbyUrl yield heartbeatSender(config, observed(url, peers), seats)
+        // a primary that cannot reach its backup asks the lobby to go on without it (F5)
+        val replicated = logic.collect { case primary: ReplicatedTable => primary }
+        val excluder   = for primary <- replicated; url <- config.lobbyUrl yield
+          BackupExcluder(config.tableId, primary, peers, HttpLobbyGateway(url))
         // every node that depends on others sends its heartbeats and checks who has gone silent
-        val liveness = Option.when(config.role != NodeRole.Lobby)(livenessTask(config, peers, replicator, epoch, promoter))
+        val liveness = Option.when(config.role != NodeRole.Lobby)(livenessTask(config, peers, replicator, replicated, promoter, excluder))
         sys.addShutdownHook:
           // the table first: it finishes the events already queued and gives every player their money back;
           // closing the connections afterwards does not count as players leaving in the middle of a hand
@@ -113,18 +117,24 @@ object Main:
 
   /** Every period: the heartbeats of this node (a table to its backup, a backup to the lobby), then the check of
    * who has been silent for too long. The heartbeat of a table to the lobby is sent by the announcer. */
-  private def livenessTask(config: NodeConfig, peers: FailureDetector[Peer], replicator: Option[HttpReplicator], epoch: Long,
-                           promoter: Option[BackupPromoter]): PeriodicTask =
+  private def livenessTask(config: NodeConfig, peers: FailureDetector[Peer], replicator: Option[HttpReplicator],
+                           primary: Option[ReplicatedTable], promoter: Option[BackupPromoter],
+                           excluder: Option[BackupExcluder]): PeriodicTask =
     val beats: () => Unit = config.role match
       case NodeRole.Backup =>
         val lobby = config.lobbyUrl.map(observed(_, peers))
         // once promoted it is the table, not the backup of it: it must not look like a backup to the lobby any more
         () => if !promoter.exists(_.isPromoted) then lobby.foreach(_.backupHeartbeat(config.tableId))
       case _ =>
-        val sender = replicator.map(BackupHeartbeatSender(_, epoch, peers))
+        val sender = for backup <- replicator; table <- primary yield BackupHeartbeatSender(backup, table.currentEpoch, peers)
         () => sender.foreach(_.tick())
-    // a backup that suspects its primary asks the lobby, at every period, to be promoted (see `BackupPromoter`)
-    PeriodicTask("failure-detector", config.heartbeat.period, runFirstNow = true)(() => { beats(); peers.check(); promoter.foreach(_.tick()) })
+    // a backup that suspects its primary asks the lobby, at every period, to be promoted (see `BackupPromoter`), and
+    // a primary that suspects its backup asks to go on without it (see `BackupExcluder`)
+    PeriodicTask("failure-detector", config.heartbeat.period, runFirstNow = true): () =>
+      beats()
+      peers.check()
+      promoter.foreach(_.tick())
+      excluder.foreach(_.tick())
 
   /** The backup takes the place of the failed primary (F4): the table continues from the last state the primary
    * confirmed, on this node, which announces itself to the lobby as the table. The players of the primary are
@@ -162,16 +172,18 @@ object Main:
   /** The HTTP API of the lobby, next to /health. */
   private def lobbyRoutes(database: Database, tokens: SessionTokens, registry: TableRegistry,
                           dispatcher: TableDispatcher, backups: FailureDetector[String]): Map[String, HttpHandler] =
-    val users  = PostgresUserRepository(database)
-    val hasher = Pbkdf2PasswordHasher()
+    val users   = PostgresUserRepository(database)
+    val hasher  = Pbkdf2PasswordHasher()
+    val arbiter = PromotionArbiter(registry, backups.forget) // a backup that becomes the primary is no longer watched as a backup
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
       LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, PostgresBalanceRepository(database), hasher, tokens)),
       LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry),
       LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry),
       LobbyApi.BackupHeartbeatPath -> BackupHeartbeatEndpoint(backups),
-      // the lobby is the arbiter of the promotions; a backup that becomes the primary is no longer watched as a backup
-      LobbyApi.PromotionPath       -> PromotionEndpoint(PromotionArbiter(registry, backups.forget)),
+      // the lobby is the arbiter of the configuration of the tables: promotions and exclusions share the epochs
+      LobbyApi.PromotionPath       -> PromotionEndpoint(arbiter),
+      LobbyApi.ExclusionPath       -> BackupExclusionEndpoint(arbiter),
       LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
     )
 

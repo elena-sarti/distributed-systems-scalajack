@@ -17,7 +17,7 @@ import scala.collection.mutable.ListBuffer
  *
  * Like the table, it runs on the single writer: the wait for the backup holds up the whole table, on purpose.
  *
- * @param epoch    the epoch of this primary (see [[ReplicaUpdate]]).
+ * @param epoch    the epoch this primary starts with (see [[ReplicaUpdate]]).
  * @param newTable builds the table on the cashier it must use.
  */
 final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Long,
@@ -29,7 +29,23 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   private val table    = newTable(held.cashier)
   private var sequence = 0L
 
+  // Changed by the liveness thread when the lobby lets the table go on without its backup, read by the writer.
+  @volatile private var epochNow = epoch
+  @volatile private var alone    = false
+
   def freeSeats: Int = table.freeSeats
+
+  /** The epoch of this primary now: it is sent with every update and every heartbeat. */
+  def currentEpoch: Long = epochNow
+
+  /** Whether the table is playing without a backup (degraded mode). */
+  def isAlone: Boolean = alone
+
+  /** The lobby has agreed that the table goes on without its backup, with `newEpoch` (see [[BackupExcluder]]).
+   * From the next event on nothing waits for the backup: the effects go out as soon as the table produces them. */
+  def goOnAlone(newEpoch: Long): Unit =
+    epochNow = newEpoch // before the flag: whoever sees the table alone also sees its new epoch
+    alone = true
 
   def onConnected(connection: Connection): Unit =
     replicated(None)(table.onConnected(held.connection(connection)))
@@ -50,7 +66,7 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
     val before      = table.snapshot
     val connections = table.connections
     event
-    if table.snapshot == before || replicate() then held.release()
+    if alone || table.snapshot == before || replicate() then held.release()
     else
       held.discard()
       table.restore(before, connections.get)
@@ -58,7 +74,7 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
 
   private def replicate(): Boolean =
     sequence += 1
-    replicator.replicate(ReplicaUpdate(epoch, sequence, table.snapshot))
+    replicator.replicate(ReplicaUpdate(epochNow, sequence, table.snapshot))
 
 object ReplicatedTable:
   val TablePaused = "The table cannot save your move right now, try again in a moment"

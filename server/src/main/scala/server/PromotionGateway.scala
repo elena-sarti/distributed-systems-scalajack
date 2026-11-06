@@ -14,3 +14,8 @@ enum PromotionAnswer:
 trait PromotionGateway:
   /** Never throws. */
   def requestPromotion(tableId: String, epoch: Long): PromotionAnswer
+
+/** How a primary node asks the lobby to go on without its backup. The answers mean the same as for a promotion. */
+trait ExclusionGateway:
+  /** Never throws. */
+  def requestExclusion(tableId: String, epoch: Long): PromotionAnswer
