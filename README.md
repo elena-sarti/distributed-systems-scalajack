@@ -15,6 +15,15 @@ In order to run the game, download the `.jar` file from the [latest release](../
 java -jar pps-scalajack.jar
 ```
 
+## Failure demo
+The failures described in the [decision record](DECISION_RECORD.md) can be played on the Docker deployment. Build the image once, then run the scenarios from the root of the repository:
+```bash
+docker compose build
+sbt "demo/run"           # every scenario
+sbt "demo/run crash"     # only one of them: crash, partition or backup
+```
+Each scenario starts the deployment afresh, sends a player to the table, kills a node or cuts it off the network, and prints what it observes.
+
 ## Documentation
 The project documentation is visible at [(./docs/report)](https://nicoforlivesi.github.io/PPS-26-scalajack/).
 

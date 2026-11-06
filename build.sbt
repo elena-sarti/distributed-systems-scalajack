@@ -59,6 +59,16 @@ lazy val client = project
     assembly / assemblyOutputPath := file("./scalajack-client.jar")
   )
 
+// The failures of the decision record played on the deployment of docker-compose.yml: `sbt "demo/run"`
+lazy val demo = project
+  .dependsOn(protocol)
+  .settings(
+    name := "scalajack-demo",
+    Compile / mainClass := Some("demo.FailureDemo"),
+    run / fork := true, // the demo ends with an exit code, which must not close sbt
+    run / baseDirectory := (ThisBuild / baseDirectory).value // docker compose is run from the root of the repository
+  )
+
 lazy val root = (project in file("."))
-  .aggregate(model, protocol, server, client)
+  .aggregate(model, protocol, server, client, demo)
   .settings(name := "scalajack", publish / skip := true)
