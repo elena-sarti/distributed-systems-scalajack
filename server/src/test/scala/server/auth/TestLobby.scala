@@ -18,6 +18,8 @@ final class TestLobby(routes: Map[String, HttpHandler]):
 
   def get(path: String): HttpResponse[String] = send(HttpRequest.newBuilder(uri(path)).GET())
 
+  def port: Int = server.boundPort
+
   def stop(): Unit = server.stop()
 
   private def uri(path: String) = URI.create(s"http://localhost:${server.boundPort}$path")

@@ -1,25 +1,27 @@
 package server.replication
 
 import protocol.LobbyApi
+import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
 import scala.util.control.NonFatal
 
-/** The backup reached over HTTP (see [[ReplicaEndpoint]]).
+/** The backup reached over HTTP (see [[ReplicaEndpoint]] and [[PrimaryHeartbeatEndpoint]]).
  *
  * @param backupUrl the address of the backup node, e.g. `http://table-1-backup:8080`.
  * @param timeout   how long the table waits for the backup: while it waits, nobody at the table can play.
  */
-final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSeconds(2)) extends Replicator:
-  private val http     = HttpClient.newBuilder().connectTimeout(timeout).build()
-  private val endpoint = URI.create(backupUrl.stripSuffix("/") + ReplicaEndpoint.Path)
+final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSeconds(2)) extends Replicator, BackupHeartbeats:
+  private val http         = HttpClient.newBuilder().connectTimeout(timeout).build()
+  private val updateUri    = URI.create(backupUrl.stripSuffix("/") + ReplicaEndpoint.Path)
+  private val heartbeatUri = URI.create(backupUrl.stripSuffix("/") + PrimaryHeartbeatEndpoint.Path)
 
   /** Whether the last update went through: only the changes are logged, not every failed attempt. */
   private var reachable = true
 
   def replicate(update: ReplicaUpdate): Boolean =
-    val status = post(update)
+    val status = post(updateUri, update)
     val stored = status.contains(200)
     if stored != reachable then
       reachable = stored
@@ -27,17 +29,22 @@ final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSec
       else System.err.println(s"The backup did not store the table (${describe(status)}): the table is paused")
     stored
 
+  /** Runs on the thread of the heartbeats, not on the table's: it does not touch `reachable`, which belongs
+   * to the table's thread. The failures are not logged here, the failure detector signals them. */
+  def heartbeat(epoch: Long): Boolean = post(heartbeatUri, ReplicaHeartbeat(epoch)).contains(200)
+
   private def describe(status: Option[Int]): String = status match
     case Some(409)   => "it follows a newer primary"
     case Some(other) => s"status $other"
     case None        => "no answer"
 
-  private def post(update: ReplicaUpdate): Option[Int] =
+  /** The status of the answer, or `None` if there was no answer (connection refused, timeout...). */
+  private def post[T: ReadWriter](uri: URI, body: T): Option[Int] =
     try
-      val request = HttpRequest.newBuilder(endpoint)
+      val request = HttpRequest.newBuilder(uri)
         .timeout(timeout)
         .header("Content-Type", "application/json")
-        .POST(HttpRequest.BodyPublishers.ofString(LobbyApi.encode(update)))
+        .POST(HttpRequest.BodyPublishers.ofString(LobbyApi.encode(body)))
         .build()
       Some(http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode())
     catch case NonFatal(_) => None

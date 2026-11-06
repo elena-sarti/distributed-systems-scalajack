@@ -23,6 +23,10 @@ object LobbyApi:
    * [[ApiError]] with status 404 if the lobby does not know the table (the node must register again). */
   val TableHeartbeatPath = "/tables/heartbeat"
 
+  /** `POST` a [[BackupHeartbeat]] (the backup of a table saying it is alive): answered by [[TableAck]] or by an
+   * [[ApiError]]. The lobby learns about a backup from its first heartbeat; it never receives seats. */
+  val BackupHeartbeatPath = "/replicas/heartbeat"
+
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
@@ -53,6 +57,9 @@ object LobbyApi:
   final case class TableHeartbeat(id: String, freeSeats: Int) derives ReadWriter
 
   final case class TableAck(id: String) derives ReadWriter
+
+  /** Sent by the backup node of `tableId` at every period: it shows the backup is alive. */
+  final case class BackupHeartbeat(tableId: String) derives ReadWriter
 
   /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
   final case class AssignRequest(token: String) derives ReadWriter:

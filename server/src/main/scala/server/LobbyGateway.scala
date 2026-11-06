@@ -17,3 +17,6 @@ trait LobbyGateway:
 
   /** Never throws. */
   def heartbeat(id: String, freeSeats: Int): HeartbeatResult
+
+  /** The backup of table `tableId` tells the lobby it is alive. Never throws. */
+  def backupHeartbeat(tableId: String): HeartbeatResult

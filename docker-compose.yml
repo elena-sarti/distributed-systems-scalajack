@@ -21,6 +21,8 @@ x-table-environment: &table-environment
   LOBBY_URL: http://lobby:8080   # where the table announces itself and sends its heartbeats
   TABLE_HOST: localhost          # the clients are outside Docker: they reach a table on the published port
   HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+  # a peer (lobby or backup) is suspected after this many seconds of silence: the same rule as the lobby's
+  HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
 
 x-table-depends: &table-depends
   db:               # the balances are in the database
@@ -92,6 +94,10 @@ services:
     environment:
       <<: *node-environment
       NODE_ROLE: backup
+      TABLE_ID: table-1   # the table it protects: the lobby identifies its heartbeats by it
+      LOBBY_URL: http://lobby:8080   # where it sends its heartbeats
+      HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+      HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
     ports:
       - "9181:8080"   # health and replication (HTTP)
 

@@ -1,7 +1,7 @@
 package server
 
 import protocol.LobbyApi
-import protocol.LobbyApi.{TableHeartbeat, TableRegistration}
+import protocol.LobbyApi.{BackupHeartbeat, TableHeartbeat, TableRegistration}
 import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -25,10 +25,16 @@ final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSec
         false
 
   def heartbeat(id: String, freeSeats: Int): HeartbeatResult =
-    post(LobbyApi.TableHeartbeatPath, TableHeartbeat(id, freeSeats)) match
-      case Some(200) => HeartbeatResult.Acknowledged
-      case Some(404) => HeartbeatResult.UnknownTable
-      case _         => HeartbeatResult.Unreachable
+    toResult(post(LobbyApi.TableHeartbeatPath, TableHeartbeat(id, freeSeats)))
+
+  def backupHeartbeat(tableId: String): HeartbeatResult =
+    toResult(post(LobbyApi.BackupHeartbeatPath, BackupHeartbeat(tableId)))
+
+  /** What the status of a heartbeat's answer means for the node (shared by the two kinds of heartbeat). */
+  private def toResult(status: Option[Int]): HeartbeatResult = status match
+    case Some(200) => HeartbeatResult.Acknowledged
+    case Some(404) => HeartbeatResult.UnknownTable
+    case _         => HeartbeatResult.Unreachable
 
   /** The status of the answer, or `None` if there was no answer (connection refused, timeout...). */
   private def post[T: ReadWriter](path: String, body: T): Option[Int] =

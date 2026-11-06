@@ -112,3 +112,21 @@ a table.
 - Only the primary of the current epoch writes the balances to the database, and only for transitions already
   confirmed by the backup.
 - An excluded replica can come back only after receiving the whole state from the current primary (resynchronisation).
+
+## Failure detection (F3)
+
+Every failure is detected with the rule already used by the lobby for the tables (E2): heartbeats every period, and a
+peer is *suspected* when it has been silent for longer than the timeout (`HEARTBEAT_TIMEOUT_SECONDS`, 3 periods by
+default, so one lost heartbeat is not enough). The detector (`FailureDetector`) only signals: promotion and the
+behaviour under partition are decided by F4 and F5, which plug into its listener.
+
+| Observer | Watches | Sign of life |
+|---|---|---|
+| lobby | primary | heartbeat to `/tables/heartbeat` (registry, E2) |
+| lobby | backup | heartbeat to `/replicas/heartbeat` (the backup is not in the registry: it takes no players) |
+| backup | primary | heartbeat to `/replica/heartbeat`, sent also when the table is idle and replicates nothing |
+| primary | backup | the answer to that heartbeat |
+| primary, backup | lobby | the answer to their heartbeats to the lobby |
+
+A heartbeat from a primary with an older epoch is refused (409) and is not a sign of life. A signalled node that is
+heard again is reported as reachable again. Worst-case detection time: the timeout plus one check period.

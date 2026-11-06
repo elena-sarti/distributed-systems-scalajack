@@ -11,6 +11,10 @@ final class BackupReplica:
 
   def latest: Option[ReplicaUpdate] = synchronized(last)
 
+  /** Whether a primary with this epoch is the one the backup follows (or a newer one): the heartbeats of a
+   * primary that has been replaced must not count as signs of life. Also true before the first update. */
+  def follows(epoch: Long): Boolean = synchronized(last.forall(_.epoch <= epoch))
+
   /** Keeps the update if it is the newest one seen so far. False if it comes from a primary older than the one
    * the backup already follows: that primary has been replaced and must not be acknowledged. */
   def store(update: ReplicaUpdate): Boolean = synchronized:

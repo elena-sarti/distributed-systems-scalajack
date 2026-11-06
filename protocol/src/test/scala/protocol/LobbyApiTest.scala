@@ -9,6 +9,10 @@ class LobbyApiTest extends AnyFunSuite:
     val request = RegisterRequest("Alice", "very secret password")
     LobbyApi.decode[RegisterRequest](LobbyApi.encode(request)) shouldBe Right(request)
 
+  test("the heartbeat of a backup survives a JSON round-trip"):
+    val beat = BackupHeartbeat("table-1")
+    LobbyApi.decode[BackupHeartbeat](LobbyApi.encode(beat)) shouldBe Right(beat)
+
   test("the answers survive a JSON round-trip"):
     LobbyApi.decode[Registered](LobbyApi.encode(Registered("Alice"))) shouldBe Right(Registered("Alice"))
     LobbyApi.decode[ApiError](LobbyApi.encode(ApiError("Username already taken"))) shouldBe Right(ApiError("Username already taken"))

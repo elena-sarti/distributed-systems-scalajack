@@ -29,6 +29,14 @@ class BackupReplicaTest extends AnyFunSuite:
     backup.store(update(1, 7, version = 9)) shouldBe false
     backup.latest shouldBe Some(update(2, 1))
 
+  test("before any update every primary is followed, afterwards only the current or a newer one"):
+    val backup = BackupReplica()
+    backup.follows(1) shouldBe true
+    backup.store(update(2, 1))
+    backup.follows(2) shouldBe true
+    backup.follows(3) shouldBe true
+    backup.follows(1) shouldBe false
+
   test("a newer primary is followed from its first update"):
     val backup = BackupReplica()
     backup.store(update(1, 7))

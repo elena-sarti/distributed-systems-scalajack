@@ -20,6 +20,8 @@ class TableAnnouncerTest extends AnyFunSuite with BeforeAndAfterEach:
       heartbeats += ((id, freeSeats))
       heartbeatAnswer
 
+    def backupHeartbeat(tableId: String): HeartbeatResult = HeartbeatResult.Acknowledged // not used by the announcer
+
   private final class FakeSeats(var freeSeats: Int) extends SeatAvailability
 
   private var gateway: FakeGateway = _
