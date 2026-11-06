@@ -98,8 +98,15 @@ services:
       LOBBY_URL: http://lobby:8080   # where it sends its heartbeats
       HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
       HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
+      # if it becomes the primary it is a table: the address it announces to the lobby for the clients (F4)
+      TABLE_HOST: localhost
+      TABLE_PUBLIC_WS_PORT: "9191"
     ports:
       - "9181:8080"   # health and replication (HTTP)
+      - "9191:8090"   # WebSocket, used only after the promotion
+    depends_on:
+      db:   # after the promotion it keeps the balances of the players in the database
+        condition: service_healthy
 
   table-2:
     <<: *backend

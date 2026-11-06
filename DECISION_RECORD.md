@@ -130,3 +130,30 @@ behaviour under partition are decided by F4 and F5, which plug into its listener
 
 A heartbeat from a primary with an older epoch is refused (409) and is not a sign of life. A signalled node that is
 heard again is reported as reachable again. Worst-case detection time: the timeout plus one check period.
+
+## Promotion of the backup (F4)
+
+Implements the first row of the promotion table: the primary is silent for the lobby **and** for the backup.
+
+1. The backup suspects its primary (F3) and, at every period, asks the lobby `POST /tables/promote` with
+   `epoch = last epoch received + 1`.
+2. The lobby (`PromotionArbiter`) grants it only if the table is marked unavailable in its registry (it does not hear the
+   primary either: two of three agree) and the epoch is greater than the last one granted for that table. Otherwise 409:
+   the primary is still alive for the lobby, so the backup is just cut off from it and nothing changes.
+3. On the grant the backup closes its replica (it follows nobody: the old primary is refused, even with a newer epoch),
+   starts the table from the last state it stored, opens the WebSocket port and announces itself to the lobby with its
+   public address. Registering replaces the entry of the failed primary, so `/assign` sends the players to the new node:
+   no client needs to know that a failover happened to be redirected.
+4. The promoted table has no backup (degraded mode) until one is brought up to date (F5, F8).
+
+Choices worth knowing:
+
+- **The players of the failed primary are treated as disconnected** (as in C5): their hands stand, the hand is settled
+  without waiting, each seat is freed at the end of the hand and the balance is saved. This keeps the database
+  consistent (nobody stays marked as sitting at a table nobody plays at). Resuming the hand for a client that comes back
+  is F7.
+- The promoted node does **not** release the players at start-up, unlike a fresh table.
+- **Not covered yet:** a primary that comes back after the promotion (restart or healed partition) is not fenced by the
+  lobby: it would register again and replace the entry. Its table would also release the players at start-up. F5
+  (alignment on recovery) must close this, e.g. with the epoch in the registration and in the heartbeats.
+- Worst-case time to the new primary: timeout + one period for the lobby to notice + one period for the retry.

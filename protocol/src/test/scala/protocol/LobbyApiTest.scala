@@ -13,6 +13,12 @@ class LobbyApiTest extends AnyFunSuite:
     val beat = BackupHeartbeat("table-1")
     LobbyApi.decode[BackupHeartbeat](LobbyApi.encode(beat)) shouldBe Right(beat)
 
+  test("the promotion request and its answer survive a JSON round-trip"):
+    val request = PromotionRequest("table-1", 1_700_000_000_001L)
+    LobbyApi.decode[PromotionRequest](LobbyApi.encode(request)) shouldBe Right(request)
+    val granted = PromotionGranted("table-1", 1_700_000_000_001L)
+    LobbyApi.decode[PromotionGranted](LobbyApi.encode(granted)) shouldBe Right(granted)
+
   test("the answers survive a JSON round-trip"):
     LobbyApi.decode[Registered](LobbyApi.encode(Registered("Alice"))) shouldBe Right(Registered("Alice"))
     LobbyApi.decode[ApiError](LobbyApi.encode(ApiError("Username already taken"))) shouldBe Right(ApiError("Username already taken"))

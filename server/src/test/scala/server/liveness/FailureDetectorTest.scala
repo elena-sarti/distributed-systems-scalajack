@@ -90,6 +90,13 @@ class FailureDetectorTest extends AnyFunSuite with BeforeAndAfterEach:
     detector.check() shouldBe Seq("backup")
     detector.isSuspected("lobby") shouldBe false
 
+  test("a peer that is forgotten is no longer watched and is never signalled"):
+    detector.forget("backup")
+    detector.status("backup") shouldBe None
+    now = t0.plusSeconds(60)
+    detector.check() shouldBe empty
+    listener.suspected shouldBe empty
+
   test("a peer that is not watched has no status"):
     detector.status("ghost") shouldBe None
     detector.isSuspected("ghost") shouldBe false

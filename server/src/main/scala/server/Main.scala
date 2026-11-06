@@ -3,11 +3,12 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.lobby.{BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
+import server.lobby.{BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
 import server.liveness.{FailureDetector, LoggingFailureListener, ObservedLobbyGateway, Peer}
-import server.replication.{BackupHeartbeatSender, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator}
+import server.replication.{BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentLinkedQueue
 import scala.util.control.NonFatal
 
 object Main:
@@ -23,6 +24,11 @@ object Main:
         val backups  = FailureDetector[String](config.heartbeat.timeout, LoggingFailureListener("lobby", id => s"the backup of table $id"))
         val peers    = FailureDetector[Peer](config.heartbeat.timeout, LoggingFailureListener(s"${config.role.toString.toLowerCase} ${config.tableId}"))
         val replica  = BackupReplica() // only used by the backup: the last state sent by its table
+        // what a backup starts when it becomes the primary (F4): to be stopped at shutdown like the rest
+        val stoppers = ConcurrentLinkedQueue[() => Unit]()
+        // only a backup that knows the lobby can be promoted: the lobby is the third vote
+        val promoter = Option.when(config.role == NodeRole.Backup)(config.lobbyUrl).flatten.map: url =>
+          BackupPromoter(config.tableId, replica, peers, HttpLobbyGateway(url), takeOver(config, tokens, peers, stoppers))
         val routes   = config.role match
           case NodeRole.Lobby  => lobbyRoutes(prepareDatabase(), tokens, registry, tableDispatcher(config, registry), backups)
           case NodeRole.Backup => Map(
@@ -43,11 +49,12 @@ object Main:
         // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
         val announcer = for seats <- logic; url <- config.lobbyUrl yield heartbeatSender(config, observed(url, peers), seats)
         // every node that depends on others sends its heartbeats and checks who has gone silent
-        val liveness = Option.when(config.role != NodeRole.Lobby)(livenessTask(config, peers, replicator, epoch))
+        val liveness = Option.when(config.role != NodeRole.Lobby)(livenessTask(config, peers, replicator, epoch, promoter))
         sys.addShutdownHook:
           // the table first: it finishes the events already queued and gives every player their money back;
           // closing the connections afterwards does not count as players leaving in the middle of a hand
           liveness.foreach(_.stop())
+          stoppers.forEach(stop => stop()) // the table a backup has started, if any
           announcer.foreach(_.stop())
           monitor.foreach(_.stop())
           table.foreach(_.stop())
@@ -106,15 +113,36 @@ object Main:
 
   /** Every period: the heartbeats of this node (a table to its backup, a backup to the lobby), then the check of
    * who has been silent for too long. The heartbeat of a table to the lobby is sent by the announcer. */
-  private def livenessTask(config: NodeConfig, peers: FailureDetector[Peer], replicator: Option[HttpReplicator], epoch: Long): PeriodicTask =
+  private def livenessTask(config: NodeConfig, peers: FailureDetector[Peer], replicator: Option[HttpReplicator], epoch: Long,
+                           promoter: Option[BackupPromoter]): PeriodicTask =
     val beats: () => Unit = config.role match
       case NodeRole.Backup =>
         val lobby = config.lobbyUrl.map(observed(_, peers))
-        () => lobby.foreach(_.backupHeartbeat(config.tableId))
+        // once promoted it is the table, not the backup of it: it must not look like a backup to the lobby any more
+        () => if !promoter.exists(_.isPromoted) then lobby.foreach(_.backupHeartbeat(config.tableId))
       case _ =>
         val sender = replicator.map(BackupHeartbeatSender(_, epoch, peers))
         () => sender.foreach(_.tick())
-    PeriodicTask("failure-detector", config.heartbeat.period, runFirstNow = true)(() => { beats(); peers.check(); () })
+    // a backup that suspects its primary asks the lobby, at every period, to be promoted (see `BackupPromoter`)
+    PeriodicTask("failure-detector", config.heartbeat.period, runFirstNow = true)(() => { beats(); peers.check(); promoter.foreach(_.tick()) })
+
+  /** The backup takes the place of the failed primary (F4): the table continues from the last state the primary
+   * confirmed, on this node, which announces itself to the lobby as the table. The players of the primary are
+   * still marked as sitting at it in the database, so this table must not release them as a fresh one does. */
+  private def takeOver(config: NodeConfig, tokens: SessionTokens, peers: FailureDetector[Peer],
+                       stoppers: ConcurrentLinkedQueue[() => Unit]): (Option[TableSnapshot], Long) => Unit = (snapshot, epoch) =>
+    println(s"Table ${config.tableId}: this backup takes over as primary, epoch $epoch")
+    val logic    = TableTakeover.resume(snapshot, DatabaseCashier(PostgresBalanceRepository(prepareDatabase()), config.tableId))
+    val table    = SingleWriterHandler(logic)
+    val endpoint = TableEndpoint(config.wsPort, table, tokens)
+    endpoint.start()
+    println(s"WebSocket endpoint listening on port ${config.wsPort}")
+    // registering replaces the entry of the failed primary: from now on the lobby sends the players to this node
+    val announcer = config.lobbyUrl.map(url => heartbeatSender(config, observed(url, peers), logic))
+    announcer.foreach(_.start())
+    val stop: () => Unit = () => { announcer.foreach(_.stop()); table.stop(); endpoint.stop() }
+    stoppers.add(stop)
+    ()
 
   /** Checks every heartbeat period which tables and backups have not been heard from within the timeout. */
   private def silenceMonitor(registry: TableRegistry, backups: FailureDetector[String], heartbeat: HeartbeatConfig): PeriodicTask =
@@ -142,6 +170,8 @@ object Main:
       LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry),
       LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry),
       LobbyApi.BackupHeartbeatPath -> BackupHeartbeatEndpoint(backups),
+      // the lobby is the arbiter of the promotions; a backup that becomes the primary is no longer watched as a backup
+      LobbyApi.PromotionPath       -> PromotionEndpoint(PromotionArbiter(registry, backups.forget)),
       LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
     )
 

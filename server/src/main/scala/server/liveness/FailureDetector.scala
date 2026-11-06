@@ -54,6 +54,10 @@ final class FailureDetector[P](timeout: Duration, listener: FailureListener[P], 
     newlySuspected.foreach(listener.onSuspected)
     newlySuspected
 
+  /** Stops watching a peer, without any signal (e.g. a backup that has become the primary). */
+  def forget(peer: P): Unit = synchronized:
+    peers = peers - peer
+
   /** `None` if the peer is not watched. */
   def status(peer: P): Option[PeerStatus] = synchronized(peers.get(peer).map(_.status))
 

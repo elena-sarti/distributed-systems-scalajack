@@ -27,6 +27,11 @@ object LobbyApi:
    * [[ApiError]]. The lobby learns about a backup from its first heartbeat; it never receives seats. */
   val BackupHeartbeatPath = "/replicas/heartbeat"
 
+  /** `POST` a [[PromotionRequest]] (a backup asking the lobby to let it take the place of its failed primary):
+   * answered by 200 and a [[PromotionGranted]], by 409 and an [[ApiError]] if the lobby does not agree (the primary
+   * is not silent for it too, or the epoch is not newer than the last promotion), by 404 if the table is unknown. */
+  val PromotionPath = "/tables/promote"
+
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
@@ -60,6 +65,12 @@ object LobbyApi:
 
   /** Sent by the backup node of `tableId` at every period: it shows the backup is alive. */
   final case class BackupHeartbeat(tableId: String) derives ReadWriter
+
+  /** The backup of `tableId` asks to become its primary with `epoch`, greater than the one of the primary it follows. */
+  final case class PromotionRequest(tableId: String, epoch: Long) derives ReadWriter
+
+  /** The lobby agrees: from now on `epoch` is the current one for the table. */
+  final case class PromotionGranted(tableId: String, epoch: Long) derives ReadWriter
 
   /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
   final case class AssignRequest(token: String) derives ReadWriter:
