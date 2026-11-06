@@ -37,6 +37,10 @@ object LobbyApi:
    * primary has been replaced), by 404 if the table is unknown. */
   val ExclusionPath = "/tables/exclude-backup"
 
+  /** `POST` a [[StartRequest]] (a replicated table node that starts and needs its epoch): answered by 200 and a
+   * [[StartGranted]], or by 409 and an [[ApiError]] while another node is playing the table (e.g. its promoted backup). */
+  val StartPath = "/tables/start"
+
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
@@ -60,11 +64,13 @@ object LobbyApi:
     override def toString: String = s"LoggedIn($username,***,$balance)"
 
   /** A table node tells the lobby where clients can reach it: `host` and `wsPort` are the address the
-   * clients will use, which is not always the one the node sees (e.g. a port published by Docker). */
-  final case class TableRegistration(id: String, host: String, wsPort: Int) derives ReadWriter
+   * clients will use, which is not always the one the node sees (e.g. a port published by Docker).
+   * A replicated table also sends its epoch, so that the lobby can refuse a primary that has been replaced. */
+  final case class TableRegistration(id: String, host: String, wsPort: Int, epoch: Option[Long] = None) derives ReadWriter
 
-  /** Sent by a table node at every period: it shows the node is alive and tells how many seats are free. */
-  final case class TableHeartbeat(id: String, freeSeats: Int) derives ReadWriter
+  /** Sent by a table node at every period: it shows the node is alive and tells how many seats are free.
+   * The epoch, as in the registration. */
+  final case class TableHeartbeat(id: String, freeSeats: Int, epoch: Option[Long] = None) derives ReadWriter
 
   final case class TableAck(id: String) derives ReadWriter
 
@@ -82,6 +88,12 @@ object LobbyApi:
 
   /** The lobby agrees: the backup is out, and `epoch` is the current one for the table. */
   final case class ExclusionGranted(tableId: String, epoch: Long) derives ReadWriter
+
+  /** A replicated table node that starts asks to be the primary of `tableId`. */
+  final case class StartRequest(tableId: String) derives ReadWriter
+
+  /** The lobby agrees: the node is the primary of the table with `epoch`. */
+  final case class StartGranted(tableId: String, epoch: Long) derives ReadWriter
 
   /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
   final case class AssignRequest(token: String) derives ReadWriter:

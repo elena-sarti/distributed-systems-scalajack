@@ -33,6 +33,15 @@ class TableAnnouncerTest extends AnyFunSuite with BeforeAndAfterEach:
     seats = FakeSeats(7)
     announcer = TableAnnouncer(gateway, "table-1", "localhost", 9091, seats)
 
+  test("when the lobby says that another node plays the table the announcer tells the node"):
+    var superseded = 0
+    val told = TableAnnouncer(gateway, "table-1", "localhost", 9091, seats, () => superseded += 1)
+    told.tick()
+    superseded shouldBe 0
+    gateway.heartbeatAnswer = HeartbeatResult.Superseded
+    told.tick()
+    superseded shouldBe 1
+
   test("the first tick registers the table with the address the clients must use, then sends the heartbeat"):
     announcer.tick()
     gateway.registrations.toList shouldBe List(("table-1", "localhost", 9091))

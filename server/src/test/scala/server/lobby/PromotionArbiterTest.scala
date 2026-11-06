@@ -87,3 +87,31 @@ class PromotionArbiterTest extends AnyFunSuite with BeforeAndAfterEach:
     threads.foreach(_.start())
     threads.foreach(_.join())
     results.toArray.count(_.isInstanceOf[PromotionDecision.Granted]) shouldBe 1
+
+  test("a replicated table that starts gets the next epoch, and the lobby remembers it"):
+    registry.remove("table-1")
+    arbiter.start("table-1") shouldBe PromotionDecision.Granted(1)
+    arbiter.admits("table-1", 1) shouldBe true
+
+  test("a primary that restarts while another node plays its table has to wait"):
+    arbiter.start("table-1") shouldBe PromotionDecision.PrimaryAlive // table-1 is available in the registry
+    primaryIsSilent()
+    arbiter.start("table-1") shouldBe PromotionDecision.Granted(1)
+
+  test("a primary that restarts and its backup that asks to be promoted: only one of them gets the epoch"):
+    primaryIsSilent()
+    arbiter.decide("table-1", 1) shouldBe PromotionDecision.Granted(1)
+    arbiter.start("table-1") shouldBe PromotionDecision.Granted(2) // possible only because the promoted node is silent too
+
+  test("a node with an older epoch is not admitted any more, the current and newer ones are"):
+    primaryIsSilent()
+    arbiter.decide("table-1", 5)
+    arbiter.admits("table-1", 4) shouldBe false
+    arbiter.admits("table-1", 5) shouldBe true
+    arbiter.admits("table-1", 6) shouldBe true
+    arbiter.admits("table-1", 5) shouldBe false // 6 is the current one now
+
+  test("after a restart the lobby learns the epochs again from the heartbeats of the primaries"):
+    val restarted = PromotionArbiter(registry)
+    restarted.admits("table-1", 7) shouldBe true
+    restarted.exclude("table-1", 7) shouldBe PromotionDecision.StaleEpoch(7)

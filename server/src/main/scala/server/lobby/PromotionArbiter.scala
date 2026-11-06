@@ -1,5 +1,13 @@
 package server.lobby
 
+/** Whether a table node that tells the lobby its epoch has not been replaced in the meantime. */
+trait EpochCheck:
+  def admits(tableId: String, epoch: Long): Boolean
+
+object EpochCheck:
+  /** For the tables that are not replicated: they send no epoch, and nothing is ever refused. */
+  val AdmitAll: EpochCheck = (_, _) => true
+
 /** What the lobby decides about a replica that asks to change the configuration of its table. */
 enum PromotionDecision:
   case Granted(epoch: Long)
@@ -21,7 +29,7 @@ enum PromotionDecision:
  *
  * @param onGranted called (outside the lock) after each promotion, with the table id.
  */
-final class PromotionArbiter(registry: TableRegistry, onGranted: String => Unit = _ => ()):
+final class PromotionArbiter(registry: TableRegistry, onGranted: String => Unit = _ => ()) extends EpochCheck:
   private var epochs = Map.empty[String, Long]
 
   def decide(tableId: String, epoch: Long): PromotionDecision =
@@ -41,6 +49,22 @@ final class PromotionArbiter(registry: TableRegistry, onGranted: String => Unit 
     registry.find(tableId) match
       case None    => PromotionDecision.UnknownTable
       case Some(_) => advance(tableId, epoch)
+
+  /** A replicated table node starts and asks to be the primary (F5). Granted, with the next epoch, unless another node
+   * is playing the table now (the table is available in the registry: e.g. the promoted backup). So a primary that
+   * restarts after its backup has taken its place does not take the table back: it waits. */
+  def start(tableId: String): PromotionDecision = synchronized:
+    registry.find(tableId) match
+      case Some(table) if table.status == TableStatus.Available => PromotionDecision.PrimaryAlive
+      case _ => advance(tableId, epochs.getOrElse(tableId, 0L) + 1)
+
+  /** Whether a table node with this epoch may register and send heartbeats: refused if it is older than the
+   * current epoch, i.e. if the node has been replaced. A newer epoch is recorded: after a restart the lobby has
+   * forgotten the epochs, and learns them again from the heartbeats of the primaries. */
+  def admits(tableId: String, epoch: Long): Boolean = synchronized:
+    val current = epochs.getOrElse(tableId, 0L)
+    if epoch > current then epochs = epochs.updated(tableId, epoch)
+    epoch >= current
 
   /** Check and record in one atomic step, so that two requests cannot both win. */
   private def judge(tableId: String, epoch: Long): PromotionDecision = synchronized:

@@ -5,9 +5,9 @@ import protocol.LobbyApi
 import protocol.ServerMessage
 import protocol.ServerMessage.{ActionRequest, ErrorMessage}
 import server.auth.TestLobby
-import server.lobby.{BackupExclusionEndpoint, HeartbeatMonitor, PromotionArbiter, PromotionEndpoint, TableRegistry}
+import server.lobby.{BackupExclusionEndpoint, HeartbeatMonitor, PrimaryStartEndpoint, PromotionArbiter, PromotionEndpoint, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.replication.*
-import server.{Cashier, Connection, ExclusionGateway, HttpLobbyGateway, PromotionAnswer, TableHandler}
+import server.{Cashier, Connection, ExclusionGateway, HttpLobbyGateway, PromotionAnswer, StartAnswer, TableAnnouncer, TableHandler}
 import utils.ModelExports.{Deck, Game, StandardCard, Suit, Value}
 import utils.TestExports.*
 import java.time.{Duration, Instant}
@@ -37,6 +37,7 @@ class PartitionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private var now: Instant                    = _
   private var registry: TableRegistry         = _
+  private var arbiter: PromotionArbiter       = _
   private var monitor: HeartbeatMonitor       = _
   private var lobby: TestLobby                = _
   private var replica: BackupReplica          = _
@@ -54,8 +55,13 @@ class PartitionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
     registry = TableRegistry()
     registry.register("table-1", "primary-host", 9091, t0)
     monitor = HeartbeatMonitor(registry, timeout, () => now)
-    val arbiter = PromotionArbiter(registry)
-    lobby = TestLobby(Map(LobbyApi.PromotionPath -> PromotionEndpoint(arbiter), LobbyApi.ExclusionPath -> BackupExclusionEndpoint(arbiter)))
+    arbiter = PromotionArbiter(registry)
+    lobby = TestLobby(Map(
+      LobbyApi.PromotionPath      -> PromotionEndpoint(arbiter),
+      LobbyApi.ExclusionPath      -> BackupExclusionEndpoint(arbiter),
+      LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry, arbiter),
+      LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry, arbiter),
+      LobbyApi.StartPath          -> PrimaryStartEndpoint(arbiter)))
     val gateway = HttpLobbyGateway(s"http://localhost:${lobby.port}")
     replica = BackupReplica()
     link = Link(replica)
@@ -128,6 +134,7 @@ class PartitionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
     toLobby.up = true // the partition heals
     period(lobbyHearsPrimary = true)
     primary.isAlone shouldBe false // its epoch has been used by the promotion
+    primary.isReplaced shouldBe true // and so it steps down
 
   test("when the replicas see each other again the backup gets the whole state, and can again take over if the primary fails"):
     aliceSeated()
@@ -147,4 +154,27 @@ class PartitionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
     period(lobbyHearsPrimary = false)
     period(lobbyHearsPrimary = false)
     takenOver.toList shouldBe List(12L)
+
+  test("a primary cut off from everybody comes back after its backup was promoted: the lobby refuses it and it steps down"):
+    val alice = aliceSeated()
+    val lobbyUrl  = s"http://localhost:${lobby.port}"
+    val announcer = TableAnnouncer(HttpLobbyGateway(lobbyUrl, epoch = () => Some(primary.currentEpoch)), "table-1",
+      "primary-host", 9091, primary, () => primary.stepDown())
+    announcer.tick() // the primary is registered, with its epoch
+    registry.register("table-1", "primary-host", 9091, t0) // as if heard at t0, on the clock of the test
+    link.up = false
+    toLobby.up = false
+    afterTheTimeout()
+    period(lobbyHearsPrimary = false)
+    period(lobbyHearsPrimary = false)
+    takenOver.toList shouldBe List(11L)
+    arbiter.admits("table-1", 11) // the promoted node announces itself with its epoch
+    registry.register("table-1", "backup-host", 9191, now)
+    announcer.tick() // the partition heals: the next heartbeat of the old primary reaches the lobby
+    primary.isReplaced shouldBe true
+    registry.find("table-1").map(_.host) shouldBe Some("backup-host") // the players are still sent to the promoted node
+    primary.onMessage(alice, PlaceBet(10))
+    alice.inbox.last shouldBe ErrorMessage(ReplicatedTable.TableMoved)
+    // and if the old primary restarts, it is not given the table back while the promoted node plays it
+    HttpLobbyGateway(lobbyUrl).requestStart("table-1") shouldBe StartAnswer.Denied(409)
 

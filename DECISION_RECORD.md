@@ -154,9 +154,8 @@ Choices worth knowing:
   is F7. If the cards had not been dealt yet, the hand is cancelled instead and the bets go back to the players: they
   are not to blame for the failure.
 - The promoted node does **not** release the players at start-up, unlike a fresh table.
-- **Not covered yet:** a primary that comes back after the promotion (restart or healed partition) is not fenced by the
-  lobby: it would register again and replace the entry. Its table would also release the players at start-up. F5
-  (alignment on recovery) must close this, e.g. with the epoch in the registration and in the heartbeats.
+- A primary that comes back after the promotion (restart or healed partition) is fenced by the lobby: see "A replaced
+  primary comes back" in the F5 section.
 - Worst-case time to the new primary: timeout + one period for the lobby to notice + one period for the retry.
 
 ## Behaviour under partition (F5)
@@ -191,4 +190,28 @@ No agreement of the lobby is needed for this: the whole state replaces whatever 
 backup holds the current epoch, which is exactly what makes it eligible again for a promotion (its request carries the
 current epoch + 1). If the two replicas lose each other again, the same race of the previous section starts, one epoch
 higher.
+
+### A replaced primary comes back: epochs from the lobby
+
+Until now the epoch of a primary was the instant it started: a primary that restarted after the promotion of its backup
+had a greater epoch than the promoted node, and the lobby would have let it go on alone and take the players back. Now
+the lobby is the only source of the epochs, as the decision record says:
+
+- **At start-up** a replicated table node asks the lobby `POST /tables/start` and waits, retrying at every period,
+  until the lobby grants it the next epoch. The lobby refuses while the table is available in its registry, i.e. while
+  another node (the promoted backup) plays it. Only once it has the epoch does the node free the players marked at the
+  table in the database, so a primary that restarts can no longer free the players of the node that replaced it.
+- At the first period the new primary sends its (empty) state to the backup, so that the backup knows the epoch even if
+  nobody plays before a failure, and can be promoted.
+- **Registrations and heartbeats carry the epoch** of a replicated table. The lobby answers 409 to an epoch older than
+  the current one: a primary that was cut off and comes back cannot register again in place of the promoted node, and
+  its first heartbeat tells it that it has been replaced. A refused exclusion (409) tells the same.
+- **A replaced primary steps down**: it refuses every move ("the table is played on another node: ask the lobby"),
+  closes the connections of its clients, which go back to the lobby, and writes nothing to the database, not even when
+  it stops. In general a primary that stops writes the balances only if the backup has acknowledged the last state or
+  the table is playing alone: otherwise the backup still has the players, and settles them if it takes over.
+- The epochs of the lobby are soft state, like the registry: after a restart the lobby learns them again from the
+  heartbeats of the primaries, which raise the current epoch of their table.
+
+Tables that are not replicated (no backup) send no epoch and are never refused.
 

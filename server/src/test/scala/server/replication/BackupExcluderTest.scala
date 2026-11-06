@@ -50,12 +50,11 @@ class BackupExcluderTest extends AnyFunSuite with BeforeAndAfterEach:
     table.isAlone shouldBe true
     table.currentEpoch shouldBe 11
 
-  test("while the lobby does not agree, or cannot be reached, the table stays paused and the request is repeated"):
+  test("while the lobby cannot be reached the table stays paused and the request is repeated"):
     backupGoesSilent()
     val lobby    = FakeLobby(PromotionAnswer.Unreachable)
     val excluder = BackupExcluder("table-1", table, peers, lobby)
     excluder.tick()
-    lobby.answer = PromotionAnswer.Denied(409) // e.g. the backup has been promoted in the meantime
     excluder.tick()
     table.isAlone shouldBe false
     table.currentEpoch shouldBe 10
@@ -63,6 +62,19 @@ class BackupExcluderTest extends AnyFunSuite with BeforeAndAfterEach:
     excluder.tick()
     table.isAlone shouldBe true
     lobby.requests should have size 3
+
+  test("a refusal because the epoch is old means that the backup has taken over: the primary steps down for good"):
+    backupGoesSilent()
+    val lobby    = FakeLobby(PromotionAnswer.Denied(409))
+    var replaced = 0
+    val excluder = BackupExcluder("table-1", table, peers, lobby, () => replaced += 1)
+    excluder.tick()
+    table.isReplaced shouldBe true
+    replaced shouldBe 1
+    lobby.answer = PromotionAnswer.Granted
+    excluder.tick()
+    table.isAlone shouldBe false
+    lobby.requests should have size 1
 
   test("once alone the primary asks nothing more"):
     backupGoesSilent()

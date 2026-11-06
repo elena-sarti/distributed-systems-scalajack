@@ -13,13 +13,15 @@ import server.{ExclusionGateway, PromotionAnswer}
  *
  * `tick` is called at every period by the liveness task, so the request is repeated for as long as the backup is
  * suspected and the lobby has not agreed (the lobby may be unreachable for a while). A refusal with 409 means that
- * the epoch of this primary is old: the backup has been promoted in the meantime, and this table stays paused.
+ * the epoch of this primary is old: the backup has been promoted in the meantime, so this primary steps down.
  */
-final class BackupExcluder(tableId: String, table: ReplicatedTable, peers: FailureDetector[Peer], lobby: ExclusionGateway):
+final class BackupExcluder(tableId: String, table: ReplicatedTable, peers: FailureDetector[Peer], lobby: ExclusionGateway,
+                           onReplaced: () => Unit = () => ()):
   private var lastAnswer: Option[PromotionAnswer] = None // to log only when the answer changes, not at every period
 
   def tick(): Unit = synchronized:
-    if table.isAlone && peers.status(Peer.Backup).contains(PeerStatus.Alive) then
+    if table.isReplaced then ()
+    else if table.isAlone && peers.status(Peer.Backup).contains(PeerStatus.Alive) then
       lastAnswer = None
       table.takeBackupBack()
     else if !table.isAlone && peers.isSuspected(Peer.Backup) then
@@ -28,4 +30,9 @@ final class BackupExcluder(tableId: String, table: ReplicatedTable, peers: Failu
       if !lastAnswer.contains(answer) then
         lastAnswer = Some(answer)
         System.out.println(s"[table $tableId] going on without the backup (epoch $epoch): $answer")
-      if answer == PromotionAnswer.Granted then table.goOnAlone(epoch)
+      answer match
+        case PromotionAnswer.Granted     => table.goOnAlone(epoch)
+        case PromotionAnswer.Denied(409) =>
+          table.stepDown()
+          onReplaced()
+        case _ => () // no majority yet: asked again at the next period

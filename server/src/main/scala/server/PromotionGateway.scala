@@ -15,6 +15,19 @@ trait PromotionGateway:
   /** Never throws. */
   def requestPromotion(tableId: String, epoch: Long): PromotionAnswer
 
+/** What the lobby answers to a replicated table node that starts. */
+enum StartAnswer:
+  /** The node is the primary of the table, with this epoch. */
+  case Granted(epoch: Long)
+  /** Another node is playing the table now (HTTP status of the refusal): the node must wait. */
+  case Denied(status: Int)
+  case Unreachable
+
+/** How a replicated table node gets its epoch from the lobby when it starts. */
+trait StartGateway:
+  /** Never throws. */
+  def requestStart(tableId: String): StartAnswer
+
 /** How a primary node asks the lobby to go on without its backup. The answers mean the same as for a promotion. */
 trait ExclusionGateway:
   /** Never throws. */

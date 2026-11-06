@@ -34,6 +34,10 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   @volatile private var alone    = false
   // Set by the liveness thread when the backup answers again; the writer brings it up to date at the next event.
   @volatile private var backupIsBack = false
+  // Set when the lobby says that another node plays this table now.
+  @volatile private var replaced = false
+  /** Whether the backup has ever stored a state of this primary (only the writer uses it). */
+  private var backupHasState = false
 
   def freeSeats: Int = table.freeSeats
 
@@ -54,6 +58,13 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
    * and can be asked again. */
   def takeBackupBack(): Unit = backupIsBack = true
 
+  /** The lobby says that this primary has been replaced: its epoch is old, another node plays the table now (e.g.
+   * this one was cut off and its backup has been promoted). From now on nothing this table does may reach the
+   * clients or the database, where it would contradict the new primary: every event is refused. */
+  def stepDown(): Unit = replaced = true
+
+  def isReplaced: Boolean = replaced
+
   def onConnected(connection: Connection): Unit =
     replicated(None)(table.onConnected(held.connection(connection)))
   def onMessage(connection: Connection, message: ClientMessage): Unit =
@@ -61,15 +72,24 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   def onDisconnected(connection: Connection): Unit =
     replicated(None)(table.onDisconnected(held.connection(connection)))
   override def onTick(): Unit =
+    // the backup learns the epoch of this primary at once, even before the first move: without it, it could not be
+    // promoted if the primary failed before anybody played
+    if !replaced && !alone && !backupHasState then replicate()
     replicated(None)(table.onTick())
 
-  /** The node is going down: the players get their money back even if the backup cannot be told. */
+  /** The node is going down: the players leave with their money, as with a move, only once the backup knows it (or
+   * if the table is playing alone). If the backup cannot be told, nothing is written: the backup still has the
+   * players, and if it takes over it settles them itself. A primary that has been replaced writes nothing at all. */
   override def onStop(): Unit =
-    table.onStop()
-    replicate()
-    held.release()
+    if !replaced then
+      table.onStop()
+      if alone || replicate() then held.release() else held.discard()
 
   private def replicated(sender: Option[Connection])(event: => Unit): Unit =
+    if replaced then sender.foreach(_.send(ErrorMessage(TableMoved)))
+    else play(sender)(event)
+
+  private def play(sender: Option[Connection])(event: => Unit): Unit =
     if alone && backupIsBack then resynchronise()
     val before      = table.snapshot
     val connections = table.connections
@@ -90,10 +110,13 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
 
   private def replicate(): Boolean =
     sequence += 1
-    replicator.replicate(ReplicaUpdate(epochNow, sequence, table.snapshot))
+    val stored = replicator.replicate(ReplicaUpdate(epochNow, sequence, table.snapshot))
+    if stored then backupHasState = true
+    stored
 
 object ReplicatedTable:
   val TablePaused = "The table cannot save your move right now, try again in a moment"
+  val TableMoved  = "This table is now played on another node: ask the lobby where it is"
 
   /** The effects of an event that must wait for the backup, in the order the table produced them. */
   private final class HeldEffects(real: Cashier):

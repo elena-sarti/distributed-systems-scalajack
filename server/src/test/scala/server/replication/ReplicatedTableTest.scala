@@ -190,3 +190,39 @@ class ReplicatedTableTest extends AnyFunSuite with BeforeAndAfterEach:
     primary.isAlone shouldBe true
     alice.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe true
 
+  test("the backup gets the state of a new primary at once, before anybody plays"):
+    primary.onTick()
+    backup.latest.map(_.epoch) shouldBe Some(1L)
+    val sent = replicator.sent
+    primary.onTick()
+    replicator.sent shouldBe sent // only once
+
+  test("a primary that has been replaced refuses every move, and nothing reaches the clients or the database"):
+    val alice = join("Alice")
+    primary.stepDown()
+    val before   = table.snapshot
+    val received = alice.inbox.size
+    log.clear()
+    primary.onMessage(alice, PlaceBet(10))
+    primary.onMessage(alice, LeaveTable)
+    primary.onTick()
+    table.snapshot shouldBe before
+    alice.inbox.drop(received).toList shouldBe List.fill(2)(ErrorMessage(ReplicatedTable.TableMoved))
+    log.toList shouldBe List("Alice <- ErrorMessage", "Alice <- ErrorMessage")
+
+  test("a primary that has been replaced writes no balance when it stops"):
+    join("Alice")
+    primary.stepDown()
+    primary.onStop()
+    cashier.returned shouldBe empty
+
+  test("a primary that stops while the backup cannot be told writes no balance: the backup still has the players"):
+    join("Alice")
+    replicator.available = false
+    primary.onStop()
+    cashier.returned shouldBe empty
+
+  test("a primary that stops gives the players their money once the backup knows it"):
+    join("Alice")
+    primary.onStop()
+    cashier.returned.toList shouldBe List("Alice" -> TableHandler.DefaultBalance)

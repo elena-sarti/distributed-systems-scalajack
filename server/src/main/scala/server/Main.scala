@@ -3,12 +3,13 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
+import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PrimaryStartEndpoint, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
 import server.liveness.{FailureDetector, LoggingFailureListener, ObservedLobbyGateway, Peer}
 import server.replication.{BackupExcluder, BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.util.control.NonFatal
 
 object Main:
@@ -39,19 +40,24 @@ object Main:
         // the lobby checks every period which tables and backups have gone silent
         val monitor  = Option.when(config.role == NodeRole.Lobby)(silenceMonitor(registry, backups, config.heartbeat))
         val health = HealthServer(config.role, config.port, routes)
-        // the start time orders the primaries: a node that starts again is newer than the one that crashed
-        val epoch      = System.currentTimeMillis()
         val replicator = Option.when(config.role == NodeRole.Table)(config.backupUrl).flatten.map(url => HttpReplicator(url))
+        // a replicated table gets its epoch from the lobby before doing anything (F5), and waits while the table is
+        // played elsewhere: before that it must not even free the players marked at the table in the database
+        val epoch    = replicator.map(_ => startEpoch(config)).getOrElse(0L)
         // a table node runs one table: its logic is driven by a single writer thread
         val logic    = Option.when(config.role == NodeRole.Table)(tableLogic(config, replicator, epoch))
         val table    = logic.map(SingleWriterHandler(_))
         val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
-        // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
-        val announcer = for seats <- logic; url <- config.lobbyUrl yield heartbeatSender(config, observed(url, peers), seats)
-        // a primary that cannot reach its backup asks the lobby to go on without it (F5)
         val replicated = logic.collect { case primary: ReplicatedTable => primary }
+        // a primary that has been replaced refuses every move and closes the connections: the clients go back to
+        // the lobby, which sends them to the node that plays the table now
+        val stepDown = stepDownOnce(replicated, endpoint)
+        // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
+        val announcer = for seats <- logic; url <- config.lobbyUrl yield
+          heartbeatSender(config, observed(url, peers, () => replicated.map(_.currentEpoch)), seats, stepDown)
+        // a primary that cannot reach its backup asks the lobby to go on without it (F5)
         val excluder   = for primary <- replicated; url <- config.lobbyUrl yield
-          BackupExcluder(config.tableId, primary, peers, HttpLobbyGateway(url))
+          BackupExcluder(config.tableId, primary, peers, HttpLobbyGateway(url), stepDown)
         // every node that depends on others sends its heartbeats and checks who has gone silent
         val liveness = Option.when(config.role != NodeRole.Lobby)(livenessTask(config, peers, replicator, replicated, promoter, excluder))
         sys.addShutdownHook:
@@ -112,8 +118,33 @@ object Main:
       case NodeRole.Lobby  => Seq.empty // it watches by table id: see `silenceMonitor`
 
   /** The lobby seen through the detector: every answer of the lobby is a sign of life. */
-  private def observed(lobbyUrl: String, peers: FailureDetector[Peer]): LobbyGateway =
-    ObservedLobbyGateway(HttpLobbyGateway(lobbyUrl), peers)
+  private def observed(lobbyUrl: String, peers: FailureDetector[Peer], epoch: () => Option[Long] = () => None): LobbyGateway =
+    ObservedLobbyGateway(HttpLobbyGateway(lobbyUrl, epoch = epoch), peers)
+
+  /** Asks the lobby, at every period until it agrees, to be the primary of the table, and returns the epoch granted.
+   * Without a lobby there is no arbiter, so no failover: any epoch will do. */
+  private def startEpoch(config: NodeConfig): Long = config.lobbyUrl match
+    case None => 1L
+    case Some(url) =>
+      val lobby = HttpLobbyGateway(url)
+      var answer = lobby.requestStart(config.tableId)
+      var last: Option[StartAnswer] = None
+      while !answer.isInstanceOf[StartAnswer.Granted] do
+        if !last.contains(answer) then println(s"Table ${config.tableId}: waiting to be the primary ($answer)")
+        last = Some(answer)
+        Thread.sleep(config.heartbeat.period.toMillis)
+        answer = lobby.requestStart(config.tableId)
+      val StartAnswer.Granted(epoch) = answer: @unchecked
+      println(s"Table ${config.tableId}: primary with epoch $epoch")
+      epoch
+
+  /** What a primary does when the lobby says it has been replaced, done once whoever notices it first. */
+  private def stepDownOnce(table: Option[ReplicatedTable], endpoint: Option[TableEndpoint]): () => Unit =
+    val done = AtomicBoolean(false)
+    () =>
+      if done.compareAndSet(false, true) then
+        table.foreach(_.stepDown())
+        endpoint.foreach(_.stop())
 
   /** Every period: the heartbeats of this node (a table to its backup, a backup to the lobby), then the check of
    * who has been silent for too long. The heartbeat of a table to the lobby is sent by the announcer. */
@@ -148,7 +179,7 @@ object Main:
     endpoint.start()
     println(s"WebSocket endpoint listening on port ${config.wsPort}")
     // registering replaces the entry of the failed primary: from now on the lobby sends the players to this node
-    val announcer = config.lobbyUrl.map(url => heartbeatSender(config, observed(url, peers), logic))
+    val announcer = config.lobbyUrl.map(url => heartbeatSender(config, observed(url, peers, () => Some(epoch)), logic))
     announcer.foreach(_.start())
     val stop: () => Unit = () => { announcer.foreach(_.stop()); table.stop(); endpoint.stop() }
     stoppers.add(stop)
@@ -160,8 +191,9 @@ object Main:
     PeriodicTask("heartbeat-monitor", heartbeat.period)(() => { monitor.check(); backups.check(); () })
 
   /** Registers the table at the lobby and then sends a heartbeat every period (the first one at once). */
-  private def heartbeatSender(config: NodeConfig, lobby: LobbyGateway, seats: SeatAvailability): PeriodicTask =
-    val announcer = TableAnnouncer(lobby, config.tableId, config.publicHost, config.advertisedWsPort, seats)
+  private def heartbeatSender(config: NodeConfig, lobby: LobbyGateway, seats: SeatAvailability,
+                              onSuperseded: () => Unit = () => ()): PeriodicTask =
+    val announcer = TableAnnouncer(lobby, config.tableId, config.publicHost, config.advertisedWsPort, seats, onSuperseded)
     PeriodicTask("table-announcer", config.heartbeat.period, runFirstNow = true)(() => announcer.tick())
 
   /** The dispatcher sends the players to the tables, and starts the nodes of the pool through Docker when
@@ -178,12 +210,14 @@ object Main:
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
       LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, PostgresBalanceRepository(database), hasher, tokens)),
-      LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry),
-      LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry),
+      // a replicated table tells its epoch: a primary that has been replaced is refused
+      LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry, arbiter),
+      LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry, arbiter),
       LobbyApi.BackupHeartbeatPath -> BackupHeartbeatEndpoint(backups),
       // the lobby is the arbiter of the configuration of the tables: promotions and exclusions share the epochs
       LobbyApi.PromotionPath       -> PromotionEndpoint(arbiter),
       LobbyApi.ExclusionPath       -> BackupExclusionEndpoint(arbiter),
+      LobbyApi.StartPath           -> PrimaryStartEndpoint(arbiter),
       LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
     )
 

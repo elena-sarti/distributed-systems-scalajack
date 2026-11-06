@@ -19,6 +19,17 @@ class LobbyApiTest extends AnyFunSuite:
     val granted = PromotionGranted("table-1", 1_700_000_000_001L)
     LobbyApi.decode[PromotionGranted](LobbyApi.encode(granted)) shouldBe Right(granted)
 
+  test("the start request of a replicated table and its answer survive a JSON round-trip"):
+    LobbyApi.decode[StartRequest](LobbyApi.encode(StartRequest("table-1"))) shouldBe Right(StartRequest("table-1"))
+    LobbyApi.decode[StartGranted](LobbyApi.encode(StartGranted("table-1", 3))) shouldBe Right(StartGranted("table-1", 3))
+
+  test("a replicated table sends its epoch with registration and heartbeat, the others send nothing more"):
+    val registration = TableRegistration("table-1", "localhost", 9091, Some(3))
+    LobbyApi.decode[TableRegistration](LobbyApi.encode(registration)) shouldBe Right(registration)
+    val heartbeat = TableHeartbeat("table-1", 4, Some(3))
+    LobbyApi.decode[TableHeartbeat](LobbyApi.encode(heartbeat)) shouldBe Right(heartbeat)
+    LobbyApi.decode[TableHeartbeat]("""{"id":"table-1","freeSeats":4}""") shouldBe Right(TableHeartbeat("table-1", 4))
+
   test("the exclusion request and its answer survive a JSON round-trip"):
     val request = ExclusionRequest("table-1", 1_700_000_000_001L)
     LobbyApi.decode[ExclusionRequest](LobbyApi.encode(request)) shouldBe Right(request)

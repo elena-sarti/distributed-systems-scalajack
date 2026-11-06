@@ -8,6 +8,8 @@ enum HeartbeatResult:
   case UnknownTable
   /** No answer: the lobby is down or the network is. Nothing to do but try again later. */
   case Unreachable
+  /** The lobby refuses this node: another node now plays the table with a newer epoch. */
+  case Superseded
 
 /** How a table node talks to the lobby. A trait so that the announcer can be tested without a network
  * and the transport can change without touching it. */
