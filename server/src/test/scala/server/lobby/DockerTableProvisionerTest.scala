@@ -49,3 +49,20 @@ class DockerTableProvisionerTest extends AnyFunSuite with BeforeAndAfterEach:
     Seq("", "a/b", "../x", "a b", "-a").foreach: id =>
       provisioner().start(id) shouldBe false
     daemon.requests shouldBe empty
+
+  private def withBackups = DockerTableProvisioner(daemon.socket, backupName = id => Some(s"$id-backup"))
+
+  test("a table that has a backup is started after its backup, so that it finds it at once"):
+    withBackups.start("table-2") shouldBe true
+    daemon.requests.toArray.toList shouldBe
+      List("POST /containers/table-2-backup/start HTTP/1.1", "POST /containers/table-2/start HTTP/1.1")
+
+  test("a table whose backup does not exist, or cannot be started, starts anyway"):
+    daemon.missing = Set("table-2-backup")
+    withBackups.start("table-2") shouldBe true
+    daemon.requests should have size 2
+
+  test("if the table itself cannot be started, the start fails even when its backup has started"):
+    daemon.missing = Set("table-2")
+    withBackups.start("table-2") shouldBe false
+

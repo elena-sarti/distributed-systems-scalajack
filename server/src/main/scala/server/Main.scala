@@ -199,7 +199,9 @@ object Main:
   /** The dispatcher sends the players to the tables, and starts the nodes of the pool through Docker when
    * all the tables are full. */
   private def tableDispatcher(config: NodeConfig, registry: TableRegistry): TableDispatcher =
-    TableDispatcher(registry, DockerTableProvisioner(Path.of(config.dockerSocket)), config.tablePool)
+    // each table of the pool has its backup, named after it (see docker-compose.yml): it is started with the table
+    val provisioner = DockerTableProvisioner(Path.of(config.dockerSocket), backupName = id => Some(s"$id-backup"))
+    TableDispatcher(registry, provisioner, config.tablePool)
 
   /** The HTTP API of the lobby, next to /health. */
   private def lobbyRoutes(database: Database, tokens: SessionTokens, registry: TableRegistry,

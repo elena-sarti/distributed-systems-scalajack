@@ -26,13 +26,17 @@ import scala.util.control.NonFatal
  * @param timeout       the longest the whole request may take: a daemon that does not answer must not block the
  *                      dispatcher, which waits for this call.
  * @param containerName the name of the container of a table (by default the id of the table itself).
+ * @param backupName    the name of the container of the backup of a table, if tables have one: it is started first,
+ *                      so that the table finds it at once. A table whose backup does not exist starts anyway, alone.
  */
 final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"),
                                    timeout: Duration = Duration.ofSeconds(5),
-                                   containerName: String => String = identity) extends TableProvisioner:
+                                   containerName: String => String = identity,
+                                   backupName: String => Option[String] = _ => None) extends TableProvisioner:
   import DockerTableProvisioner.*
 
   def start(tableId: String): Boolean =
+    backupName(tableId).foreach(startBackup(tableId, _))
     val name = containerName(tableId)
     if !TableProvisioner.isValidId(name) then
       System.err.println(s"Cannot start table $tableId: '$name' is not a valid container name")
@@ -46,6 +50,17 @@ final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"
         case other =>
           System.err.println(s"Cannot start table $tableId: ${other.fold("no answer from Docker")(status => s"Docker answered $status")}")
           false
+
+  /** A backup that cannot be started is not a reason to keep the table down: the table goes on without it, once the
+   * lobby agrees (F5), so this only writes in the log. */
+  private def startBackup(tableId: String, name: String): Unit =
+    if !TableProvisioner.isValidId(name) then
+      System.err.println(s"Cannot start the backup of table $tableId: '$name' is not a valid container name")
+    else post(s"/containers/$name/start") match
+      case Some(204 | 304) => ()
+      case Some(404)       => System.out.println(s"Table $tableId has no backup: container '$name' does not exist")
+      case other =>
+        System.err.println(s"Cannot start the backup of table $tableId: ${other.fold("no answer from Docker")(status => s"Docker answered $status")}")
 
   /** The status of the answer, or `None` if there is none (no daemon, no permission, timeout...). */
   private def post(path: String): Option[Int] =

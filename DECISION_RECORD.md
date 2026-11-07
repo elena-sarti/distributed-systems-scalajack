@@ -215,3 +215,11 @@ the lobby is the only source of the epochs, as the decision record says:
 
 Tables that are not replicated (no backup) send no epoch and are never refused.
 
+## Every table has its backup (F8)
+
+The pool tables (`table-2`, `table-3`) are replicated like `table-1`: each one has a backup container named after it
+(`table-2-backup`, `table-3-backup`), in the same profile, with its own published ports (health `918n`, WebSocket
+`919n` after a promotion). When the lobby starts a table of the pool it starts its backup first, so that the table can
+replicate from its first move; a backup that does not exist or cannot be started does not keep the table down: the table
+is paused until the lobby lets it go on alone (F5), as if the backup had failed.
+

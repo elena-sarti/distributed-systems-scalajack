@@ -22,6 +22,8 @@ final class FakeDockerDaemon:
 
   /** The status of the next answers. */
   @volatile var status: Int = 204
+  /** The containers that do not exist: the requests about them get 404, whatever `status` is. */
+  @volatile var missing: Set[String] = Set.empty
   /** If `false` the daemon accepts the request and then stays silent (a daemon that hangs). */
   @volatile var answers: Boolean = true
   val requests = ConcurrentLinkedQueue[String]()
@@ -38,10 +40,12 @@ final class FakeDockerDaemon:
 
   private def serve(channel: SocketChannel): Unit =
     val in = BufferedReader(InputStreamReader(Channels.newInputStream(channel), UTF_8))
-    requests.add(in.readLine())
+    val request = in.readLine()
+    requests.add(request)
+    val answer = if missing.exists(name => request.contains(s"/containers/$name/")) then 404 else status
     Iterator.continually(in.readLine()).takeWhile(line => line != null && line.nonEmpty).foreach(_ => ()) // skip the headers
     if answers then
-      channel.write(ByteBuffer.wrap(s"HTTP/1.1 $status Reply\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(UTF_8)))
+      channel.write(ByteBuffer.wrap(s"HTTP/1.1 $answer Reply\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".getBytes(UTF_8)))
       channel.close()
     else silentConnections.add(channel)
 

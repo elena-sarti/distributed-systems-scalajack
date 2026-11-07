@@ -24,6 +24,21 @@ x-table-environment: &table-environment
   # a peer (lobby or backup) is suspected after this many seconds of silence: the same rule as the lobby's
   HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
 
+# What every backup has in common: it is a copy of its table, and the node that takes the table's place if the table
+# fails. Its name is the one of its table followed by "-backup": the lobby relies on it to start the two together.
+x-backup-environment: &backup-environment
+  <<: *node-environment
+  NODE_ROLE: backup
+  LOBBY_URL: http://lobby:8080   # where it sends its heartbeats
+  HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+  HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
+  # if it becomes the primary it is a table: the address it announces to the lobby for the clients (F4)
+  TABLE_HOST: localhost
+
+x-backup-depends: &backup-depends
+  db:   # after the promotion it keeps the balances of the players in the database
+    condition: service_healthy
+
 x-table-depends: &table-depends
   db:               # the balances are in the database
     condition: service_healthy
@@ -34,6 +49,7 @@ x-table-depends: &table-depends
 # table-1; table-2 and table-3 belong to the profile "pool", so they are not started by it. They must
 # exist, though, for the lobby to start them: create them once, without starting them, with
 #   docker compose --profile pool up --no-start
+# Every table has its backup, which the lobby starts together with the table.
 
 services:
   db:
@@ -87,26 +103,18 @@ services:
         condition: service_started
 
   # The copy of table-1: it keeps the last state of the table and takes no players. It has the same
-  # environment as the other nodes, so that one day it can take the place of the table.
+  # environment as the other nodes, so that it can take the place of the table.
   table-1-backup:
     <<: *backend
     container_name: table-1-backup
     environment:
-      <<: *node-environment
-      NODE_ROLE: backup
+      <<: *backup-environment
       TABLE_ID: table-1   # the table it protects: the lobby identifies its heartbeats by it
-      LOBBY_URL: http://lobby:8080   # where it sends its heartbeats
-      HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
-      HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
-      # if it becomes the primary it is a table: the address it announces to the lobby for the clients (F4)
-      TABLE_HOST: localhost
       TABLE_PUBLIC_WS_PORT: "9191"
     ports:
       - "9181:8080"   # health and replication (HTTP)
       - "9191:8090"   # WebSocket, used only after the promotion
-    depends_on:
-      db:   # after the promotion it keeps the balances of the players in the database
-        condition: service_healthy
+    depends_on: *backup-depends
 
   table-2:
     <<: *backend
@@ -116,10 +124,27 @@ services:
       <<: *table-environment
       TABLE_ID: table-2
       TABLE_PUBLIC_WS_PORT: "9092"
+      BACKUP_URL: http://table-2-backup:8080
     ports:
       - "9082:8080"
       - "9092:8090"
-    depends_on: *table-depends
+    depends_on:
+      <<: *table-depends
+      table-2-backup:
+        condition: service_started
+
+  table-2-backup:
+    <<: *backend
+    container_name: table-2-backup
+    profiles: ["pool"]
+    environment:
+      <<: *backup-environment
+      TABLE_ID: table-2
+      TABLE_PUBLIC_WS_PORT: "9192"
+    ports:
+      - "9182:8080"
+      - "9192:8090"
+    depends_on: *backup-depends
 
   table-3:
     <<: *backend
@@ -129,10 +154,27 @@ services:
       <<: *table-environment
       TABLE_ID: table-3
       TABLE_PUBLIC_WS_PORT: "9093"
+      BACKUP_URL: http://table-3-backup:8080
     ports:
       - "9083:8080"
       - "9093:8090"
-    depends_on: *table-depends
+    depends_on:
+      <<: *table-depends
+      table-3-backup:
+        condition: service_started
+
+  table-3-backup:
+    <<: *backend
+    container_name: table-3-backup
+    profiles: ["pool"]
+    environment:
+      <<: *backup-environment
+      TABLE_ID: table-3
+      TABLE_PUBLIC_WS_PORT: "9193"
+    ports:
+      - "9183:8080"
+      - "9193:8090"
+    depends_on: *backup-depends
 
 volumes:
   db-data:
