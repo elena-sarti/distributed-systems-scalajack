@@ -16,11 +16,20 @@ final class FakeTableServer:
   private val disconnected = Semaphore(0)
   private val started      = CountDownLatch(1)
 
+  /** The `Authorization` header of the last handshake, if it had one. */
+  @volatile var lastAuthorization: Option[String] = None
+  /** What the server answers to a message from a client, if anything (by default it answers nothing). */
+  @volatile var reply: String => Option[String] = _ => None
+
   private val server = new WebSocketServer(InetSocketAddress(0)): // port 0: free port chosen by the OS
     override def onStart(): Unit = started.countDown()
-    override def onOpen(socket: WebSocket, handshake: ClientHandshake): Unit = connected.release()
+    override def onOpen(socket: WebSocket, handshake: ClientHandshake): Unit =
+      lastAuthorization = Option(handshake.getFieldValue("Authorization")).filter(_.nonEmpty)
+      connected.release()
     override def onClose(socket: WebSocket, code: Int, reason: String, remote: Boolean): Unit = disconnected.release()
-    override def onMessage(socket: WebSocket, text: String): Unit = received.offer(text)
+    override def onMessage(socket: WebSocket, text: String): Unit =
+      received.offer(text)
+      reply(text).foreach(socket.send)
     override def onError(socket: WebSocket, error: Exception): Unit = ()
 
   def start(): Unit =

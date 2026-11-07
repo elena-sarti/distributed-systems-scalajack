@@ -15,8 +15,11 @@ object WebSocketConnection:
   private val ConnectTimeout = JDuration.ofSeconds(5)
   private val CloseTimeout   = 2.seconds
 
-  /** The connection lives as long as the [[Resource]] is in use and is always closed afterwards. */
-  def connect(uri: URI): Resource[IO, ServerConnection] =
+  /** The connection lives as long as the [[Resource]] is in use and is always closed afterwards.
+   *
+   * @param token the session token given by the lobby: the tables accept only the clients that show one, in the
+   *              `Authorization` header of the handshake. */
+  def connect(uri: URI, token: Option[String] = None): Resource[IO, ServerConnection] =
     for
       // Bridge between the JDK threads (callbacks) and cats-effect: it runs the effects
       // submitted by the callbacks one at a time and in order, so messages are not reordered.
@@ -28,13 +31,16 @@ object WebSocketConnection:
       // One permit: only one send at a time (the JDK forbids overlapping sends).
       writer     <- Resource.eval(Semaphore[IO](1))
       listener    = EventListener(dispatcher, events, closed)
-      socket     <- Resource.make(open(uri, listener))(close(_, closed))
+      socket     <- Resource.make(open(uri, token, listener))(close(_, closed))
     yield WebSocketServerConnection(socket, events, closed, writer)
 
   /** Starts the handshake. `buildAsync` returns immediately with a future: `fromCompletableFuture`
    * turns it into an `IO` that suspends (without blocking a thread) until the connection is ready or fails. */
-  private def open(uri: URI, listener: WebSocket.Listener): IO[WebSocket] =
-    IO.fromCompletableFuture(IO(http.newWebSocketBuilder().connectTimeout(ConnectTimeout).buildAsync(uri, listener)))
+  private def open(uri: URI, token: Option[String], listener: WebSocket.Listener): IO[WebSocket] =
+    IO.fromCompletableFuture(IO:
+      val builder = http.newWebSocketBuilder().connectTimeout(ConnectTimeout)
+      token.foreach(value => builder.header("Authorization", s"Bearer $value"))
+      builder.buildAsync(uri, listener))
 
   /** Polite close: send a Close frame, give the server a moment to answer, then drop the socket anyway.
    * Errors while sending are ignored: if the connection is already gone there is nothing left to close. */

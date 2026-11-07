@@ -20,6 +20,14 @@ class WebSocketConnectionTest extends AnyFunSuite:
       IO.blocking(server.awaitClientConnected()) *> use(connection)
     program.timeout(10.seconds).unsafeRunSync()
 
+  test("the session token is shown to the table in the handshake, and nothing is sent without one"):
+    withServer: server =>
+      WebSocketConnection.connect(server.uri, Some("a.b.c")).use(_ => IO.blocking(server.awaitClientConnected()))
+        .timeout(10.seconds).unsafeRunSync()
+      server.lastAuthorization shouldBe Some("Bearer a.b.c")
+      withConnection(server)(_ => IO.unit)
+      server.lastAuthorization shouldBe None
+
   test("a message sent by the client reaches the server as JSON"):
     withServer: server =>
       withConnection(server)(_.send(ClientMessage.JoinTable("Alice")))
