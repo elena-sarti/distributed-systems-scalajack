@@ -1,5 +1,6 @@
 package demo
 
+import protocol.PlayerView
 import java.time.Duration
 import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
@@ -94,21 +95,27 @@ object FailureDemo:
 
   private def promotionGranted(line: String): Boolean = line.contains("promotion to primary") && line.endsWith("Granted")
 
-  /** The player goes back to the lobby, is sent to the promoted node and finds the money of the interrupted hand
-   * settled: lost, pushed or won, never anything else. */
-  private def backOnThePromotedNode(report: Report, player: Player): Unit =
-    // asked before, the lobby would find no table with a free seat and could start a node of the pool
+  private def describe(view: Option[PlayerView]): String =
+    view.fold("nothing")(v => s"cards ${v.cards.map(card => s"${card.value}-${card.suit}").mkString(" ")}, balance ${v.balance}")
+
+  /** The player has lost the table: like the client, it asks the lobby where the table is now and sits down again. It
+   * must find its seat as it left it (`before`), and finish the hand there: lost, pushed or won, never anything else. */
+  private def backOnThePromotedNode(report: Report, player: Player, before: Option[PlayerView]): Unit =
     val announced = Docker.awaitLog(LobbyService, Reaction)(_.contains(s"registered at localhost:$PromotedPort"))
     report.check("the promoted node announces itself to the lobby as the table", announced.isDefined)
-    player.sitDown() match
-      case Left(reason) => report.check(s"${player.name} sits again at the table ($reason)", met = false)
+    player.comeBack() match
+      case Left(reason) => report.check(s"${player.name} gets the seat back ($reason)", met = false)
       case Right(seat) =>
-        report.check(s"the lobby sends ${player.name} to the promoted node (port ${seat.address.wsPort})",
+        report.check(s"asked where the table is now (/locate), the lobby sends ${player.name} to the promoted node (port ${seat.address.wsPort})",
           seat.address.wsPort == PromotedPort)
+        val after = player.awaitView(seat)
+        report.check(s"${player.name} is back in the same seat, as it was: ${describe(after)}",
+          after.isDefined && after.map(v => (v.cards, v.balance)) == before.map(v => (v.cards, v.balance)))
         val start   = player.initialBalance
         val settled = Set(start - Bet, start, start + Bet, start + Bet * 1.5) // lost, push, won, blackjack
-        report.check(s"the interrupted hand has been settled by the new primary: balance $start -> ${seat.balance}",
-          settled.contains(seat.balance))
+        val end     = player.finishHand(seat)
+        report.check(s"the hand goes on from where it was and ends on the promoted node: balance $start -> ${end.getOrElse("-")}",
+          end.exists(settled.contains))
         report.check(s"${player.name} plays a new hand on the promoted node", player.betAndAwaitCards(seat, Bet))
         seat.connection.close()
 
@@ -116,29 +123,33 @@ object FailureDemo:
     val report = Report("The primary crashes")
     freshStart(report)
     playerInAHand(report, "crash").foreach: (player, seat) =>
+      val seen = player.settledView(seat)
+      report.note(s"before the failure: ${describe(seen)}")
       println("  killing the primary...")
-      val before = Docker.countLog(Backup)(promotionGranted)
+      val granted = Docker.countLog(Backup)(promotionGranted)
       Docker.kill(Primary)
       report.check("the client sees its connection to the primary drop", seat.connection.awaitClosed(Duration.ofSeconds(10)))
-      val promoted = Docker.awaitLog(Backup, Reaction, before)(promotionGranted)
+      val promoted = Docker.awaitLog(Backup, Reaction, granted)(promotionGranted)
       report.check(s"lobby and backup agree that the primary is gone: the backup is promoted (after ${promoted.fold("-")(seconds)})",
         promoted.isDefined)
       Docker.logLines(Backup).filter(promotionGranted).lastOption.foreach(report.note)
-      backOnThePromotedNode(report, player)
+      backOnThePromotedNode(report, player, seen)
     report
 
   private def partition(): Report =
     val report = Report("The primary is cut off from everybody, then the network comes back")
     freshStart(report)
     playerInAHand(report, "split").foreach: (player, seat) =>
+      val seen = player.settledView(seat)
+      report.note(s"before the failure: ${describe(seen)}")
       val network = Docker.networkOf(Primary)
       println(s"  disconnecting the primary from $network...")
-      val before = Docker.countLog(Backup)(promotionGranted)
+      val granted = Docker.countLog(Backup)(promotionGranted)
       Docker.isolate(Primary, network)
-      val promoted = Docker.awaitLog(Backup, Reaction, before)(promotionGranted)
+      val promoted = Docker.awaitLog(Backup, Reaction, granted)(promotionGranted)
       report.check(s"the backup and the lobby are a majority: the backup is promoted (after ${promoted.fold("-")(seconds)})",
         promoted.isDefined)
-      backOnThePromotedNode(report, player)
+      backOnThePromotedNode(report, player, seen)
       println("  reconnecting the old primary...")
       val registrations = Docker.countLog(LobbyService)(_.contains(s"registered at localhost:$PrimaryPort"))
       Docker.reconnect(Primary, network)
@@ -177,10 +188,12 @@ object FailureDemo:
       val synced = Docker.awaitLog(Primary, Reaction)(_.contains("has the whole table again"))
       report.check(s"the backup gets the whole state back and the moves wait for it again (after ${synced.fold("-")(seconds)})",
         synced.isDefined)
+      val seen = player.settledView(seat)
+      report.note(s"before the failure: ${describe(seen)}")
       println("  killing the primary, to see that the backup is up to date...")
-      val before = Docker.countLog(Backup)(promotionGranted)
+      val granted = Docker.countLog(Backup)(promotionGranted)
       Docker.kill(Primary)
-      val promoted = Docker.awaitLog(Backup, Reaction, before)(promotionGranted)
+      val promoted = Docker.awaitLog(Backup, Reaction, granted)(promotionGranted)
       report.check(s"the backup, up to date again, takes over (after ${promoted.fold("-")(seconds)})", promoted.isDefined)
-      backOnThePromotedNode(report, player)
+      backOnThePromotedNode(report, player, seen)
     report

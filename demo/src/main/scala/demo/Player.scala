@@ -1,10 +1,11 @@
 package demo
 
 import protocol.{ClientMessage, MessageCodec, ServerMessage}
-import protocol.ClientMessage.{JoinTable, PlaceBet}
+import protocol.ClientMessage.{AnswerInsurance, JoinTable, PlaceBet, Stand}
 import protocol.LobbyApi
-import protocol.LobbyApi.{AssignRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
-import protocol.ServerMessage.{ErrorMessage, JoinAccepted, JoinRejected, TableUpdate}
+import protocol.LobbyApi.{AssignRequest, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
+import protocol.ServerMessage.{ActionRequest, BetRequest, ErrorMessage, HandResults, InsuranceOffer, JoinAccepted, JoinRejected, TableUpdate}
+import protocol.PlayerView
 import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse, WebSocket}
@@ -26,6 +27,12 @@ final class Lobby(baseUrl: String):
   /** Where the lobby sends the player now, or the status of the refusal (0 if the lobby did not answer). */
   def assign(token: String): Either[Int, TableAddress] =
     post(LobbyApi.AssignPath, AssignRequest(token)) match
+      case (200, body) => LobbyApi.decode[TableAddress](body).left.map(_ => 200)
+      case (status, _) => Left(status)
+
+  /** Where the table of the player is now (see `/locate`), or the status of the refusal (0 if no answer). */
+  def locate(token: String): Either[Int, TableAddress] =
+    post(LobbyApi.LocatePath, LocateRequest(token)) match
       case (200, body) => LobbyApi.decode[TableAddress](body).left.map(_ => 200)
       case (status, _) => Left(status)
 
@@ -57,6 +64,8 @@ final class TableConnection private (socket: WebSocket, inbox: LinkedBlockingQue
     result
 
   /** Whether the table closes the connection (or it drops) within the timeout. */
+  def isOpen: Boolean = open
+
   def awaitClosed(timeout: Duration): Boolean =
     await(timeout)(PartialFunction.empty)
     !open
@@ -94,12 +103,18 @@ final case class Seat(address: TableAddress, connection: TableConnection, balanc
 final class Player private (lobby: Lobby, val name: String, token: String, val initialBalance: Double):
 
   /** Asks the lobby for a table, as many times as needed within the timeout, and sits down there. */
-  def sitDown(timeout: Duration = Duration.ofSeconds(30)): Either[String, Seat] =
+  def sitDown(timeout: Duration = Duration.ofSeconds(30)): Either[String, Seat] = untilSeated(timeout)(lobby.assign(token))
+
+  /** After losing the table: asks the lobby where it is now (`/locate`), as many times as needed within the timeout,
+   * and sits down there again with the same name, which gives the seat back. This is what the client does. */
+  def comeBack(timeout: Duration = Duration.ofSeconds(30)): Either[String, Seat] = untilSeated(timeout)(lobby.locate(token))
+
+  private def untilSeated(timeout: Duration)(ask: => Either[Int, TableAddress]): Either[String, Seat] =
     val end = Instant.now().plus(timeout)
-    var result: Either[String, Seat] = Left("no table was assigned")
+    var result: Either[String, Seat] = Left("no table was given")
     var done = false
     while !done && Instant.now().isBefore(end) do
-      lobby.assign(token) match
+      ask match
         case Right(address) =>
           result = join(address)
           done = result.isRight
@@ -126,6 +141,36 @@ final class Player private (lobby: Lobby, val name: String, token: String, val i
     seat.connection.await(timeout) {
       case TableUpdate(table) if table.players.exists(p => p.name == name && p.cards.nonEmpty) => true
     }.isDefined
+
+  /** What the table shows of this player once nothing more arrives for `quiet`: the state the player is left in. */
+  def settledView(seat: Seat, quiet: Duration = Duration.ofSeconds(1)): Option[PlayerView] =
+    var last = Option.empty[PlayerView]
+    var more = true
+    while more do
+      seat.connection.await(quiet) { case message => message } match
+        case Some(TableUpdate(table)) => last = table.players.find(_.name == name).orElse(last)
+        case Some(_)                  => ()
+        case None                     => more = false
+    last
+
+  /** The first view of the table that shows this player: right after sitting down again, the state of the seat. */
+  def awaitView(seat: Seat, timeout: Duration = Duration.ofSeconds(5)): Option[PlayerView] =
+    seat.connection.await(timeout) { case TableUpdate(table) if table.players.exists(_.name == name) =>
+      table.players.find(_.name == name).get }
+
+  /** Plays the hand in progress to its end, standing at once and refusing the insurance: the balance afterwards, or
+   * the current one if no hand is being played (the table asks for a bet). */
+  def finishHand(seat: Seat, timeout: Duration = Duration.ofSeconds(30)): Option[Double] =
+    val end = Instant.now().plus(timeout)
+    var result = Option.empty[Double]
+    while result.isEmpty && seat.connection.isOpen && Instant.now().isBefore(end) do
+      seat.connection.await(Duration.between(Instant.now(), end)) { case message => message } match
+        case Some(InsuranceOffer)         => seat.connection.send(AnswerInsurance(false))
+        case Some(ActionRequest(_, _, _)) => seat.connection.send(Stand)
+        case Some(HandResults(balances))  => result = balances.collectFirst { case (`name`, balance) => balance }
+        case Some(BetRequest(balance, _)) => result = Some(balance) // no hand was in progress
+        case _                            => ()
+    result
 
   /** Bets: `Right` if the bet is taken (the cards are dealt), otherwise the reason the table gives. */
   def tryToBet(seat: Seat, amount: Int, timeout: Duration = Duration.ofSeconds(5)): Either[String, Unit] =
