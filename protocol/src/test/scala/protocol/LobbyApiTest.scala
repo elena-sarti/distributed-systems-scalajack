@@ -84,6 +84,9 @@ class LobbyApiTest extends AnyFunSuite:
     LobbyApi.TableHeartbeatPath should startWith("/tables/")
     LobbyApi.TableRegisterPath should not equal LobbyApi.TableHeartbeatPath
 
+  test("the paths the clients call are not under /tables, which is for the nodes"):
+    List(LobbyApi.AssignPath, LobbyApi.LocatePath).foreach(_ should not startWith "/tables/")
+
   test("an assignment request and its answers survive a JSON round-trip"):
     val request = AssignRequest("a.b.c")
     LobbyApi.decode[AssignRequest](LobbyApi.encode(request)) shouldBe Right(request)

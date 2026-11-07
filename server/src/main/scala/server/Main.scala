@@ -10,6 +10,7 @@ import server.replication.{BackupExcluder, BackupHeartbeatSender, BackupPromoter
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 object Main:
@@ -173,7 +174,8 @@ object Main:
   private def takeOver(config: NodeConfig, tokens: SessionTokens, peers: FailureDetector[Peer],
                        stoppers: ConcurrentLinkedQueue[() => Unit]): (Option[TableSnapshot], Long) => Unit = (snapshot, epoch) =>
     println(s"Table ${config.tableId}: this backup takes over as primary, epoch $epoch")
-    val logic    = TableTakeover.resume(snapshot, DatabaseCashier(PostgresBalanceRepository(prepareDatabase()), config.tableId))
+    val cashier  = DatabaseCashier(PostgresBalanceRepository(prepareDatabase()), config.tableId)
+    val logic    = TableTakeover.resume(snapshot, cashier, config.returnWindow.toMillis.millis)
     val table    = SingleWriterHandler(logic)
     val endpoint = TableEndpoint(config.wsPort, table, tokens)
     endpoint.start()

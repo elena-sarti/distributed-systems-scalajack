@@ -215,6 +215,18 @@ the lobby is the only source of the epochs, as the decision record says:
 
 Tables that are not replicated (no backup) send no epoch and are never refused.
 
+## Resuming the hand after a failover (F7)
+
+- A client that loses its table asks the lobby `POST /locate` with its session token. The lobby reads in the database
+  at which table the user sits, and answers with the address that table has now in the registry: the node that plays it
+  at this moment. 503 while the table is not reachable (the backup is taking over), 404 if the user sits nowhere.
+- The promoted node keeps the players of the failed primary in their seats and waits for them for a while
+  (`RETURN_WINDOW_SECONDS`, 30 s by default), deciding for nobody in the meantime. A client that sits down again with
+  its name gets its seat back, with the same cards and balance, and the request the table was waiting for from it:
+  the hand goes on from where it was.
+- When the time is over, the players who have not come back are treated as clients that dropped (C5): before the deal
+  their bets go back to them, after it their hands stand.
+
 ## Every table has its backup (F8)
 
 The pool tables (`table-2`, `table-3`) are replicated like `table-1`: each one has a backup container named after it
@@ -222,4 +234,3 @@ The pool tables (`table-2`, `table-3`) are replicated like `table-1`: each one h
 `919n` after a promotion). When the lobby starts a table of the pool it starts its backup first, so that the table can
 replicate from its first move; a backup that does not exist or cannot be started does not keep the table down: the table
 is paused until the lobby lets it go on alone (F5), as if the backup had failed.
-

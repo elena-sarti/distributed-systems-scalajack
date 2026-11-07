@@ -34,6 +34,8 @@ x-backup-environment: &backup-environment
   HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
   # if it becomes the primary it is a table: the address it announces to the lobby for the clients (F4)
   TABLE_HOST: localhost
+  # after a take over, how long the players of the failed primary have to come back to their seats (F7)
+  RETURN_WINDOW_SECONDS: ${RETURN_WINDOW_SECONDS:-30}
 
 x-backup-depends: &backup-depends
   db:   # after the promotion it keeps the balances of the players in the database

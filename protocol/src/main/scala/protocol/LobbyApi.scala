@@ -47,7 +47,7 @@ object LobbyApi:
    * - 404 and an [[ApiError]]: the player is not seated anywhere (the seat has been given up: ask for a new one with `/assign`);
    * - 503 and an [[ApiError]]: the table is not reachable yet (the backup is taking over): try again in a moment;
    * - 401: invalid token. */
-  val LocatePath = "/tables/locate"
+  val LocatePath = "/locate"
 
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;

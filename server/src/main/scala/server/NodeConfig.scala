@@ -13,6 +13,8 @@ import java.time.Duration
  *                  is the maximum number of tables. Used by the lobby.
  * @param dockerSocket the Unix socket of the Docker daemon, used by the lobby to start the tables.
  * @param backupUrl where a table node finds its backup; without it the table is not replicated.
+ * @param returnWindow how long a backup that takes over its table waits for the players of the failed primary to
+ *                     come back to their seats.
  */
 final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.DefaultWsPort,
                             tableId: String = NodeConfig.DefaultTableId,
@@ -22,7 +24,8 @@ final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.
                             heartbeat: HeartbeatConfig = HeartbeatConfig.Default,
                             tablePool: Seq[String] = Seq.empty,
                             dockerSocket: String = NodeConfig.DefaultDockerSocket,
-                            backupUrl: Option[String] = None):
+                            backupUrl: Option[String] = None,
+                            returnWindow: Duration = NodeConfig.DefaultReturnWindow):
   /** The WebSocket port to hand out to the clients. */
   def advertisedWsPort: Int = publicWsPort.getOrElse(wsPort)
 
@@ -50,6 +53,7 @@ object NodeConfig:
   val DefaultTableId = "table"
   val DefaultPublicHost = "localhost"
   val DefaultDockerSocket = "/var/run/docker.sock"
+  val DefaultReturnWindow: Duration = Duration.ofSeconds(30)
 
   /** Pure function: takes the environment as a parameter, so it is trivially testable. */
   def fromEnv(env: Map[String, String]): Either[String, NodeConfig] =
@@ -66,7 +70,12 @@ object NodeConfig:
       pool <- parsePool(env)
       dockerSocket = env.get("DOCKER_SOCKET").map(_.trim).filter(_.nonEmpty).getOrElse(DefaultDockerSocket)
       backupUrl <- parseUrl("BACKUP_URL", env)
-    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat, pool, dockerSocket, backupUrl)
+      returnWindow <- parseSeconds("RETURN_WINDOW_SECONDS", env, DefaultReturnWindow)
+    yield NodeConfig(role, port, wsPort, tableId, lobbyUrl, publicHost, publicWsPort, heartbeat, pool, dockerSocket, backupUrl, returnWindow)
+
+  private def parseSeconds(name: String, env: Map[String, String], default: Duration): Either[String, Duration] =
+    env.get(name).fold(Right(default)): s =>
+      s.toLongOption.filter(_ >= 1).map(Duration.ofSeconds).toRight(s"Invalid $name '$s'")
 
   private def parsePort(name: String, env: Map[String, String], default: Int): Either[String, Int] =
     env.get(name).fold(Right(default)): s =>

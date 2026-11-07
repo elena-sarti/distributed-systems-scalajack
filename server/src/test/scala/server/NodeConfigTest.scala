@@ -83,6 +83,13 @@ class NodeConfigTest extends AnyFunSuite:
     Seq("table-1,,table-2", "table-1,table-1", "bad/name", "../x", " ").foreach: pool =>
       NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "TABLE_POOL" -> pool)).isLeft shouldBe true
 
+  test("a backup that takes over waits 30 s for the players to come back, unless RETURN_WINDOW_SECONDS says otherwise"):
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "backup")).map(_.returnWindow) shouldBe Right(Duration.ofSeconds(30))
+    NodeConfig.fromEnv(Map("NODE_ROLE" -> "backup", "RETURN_WINDOW_SECONDS" -> "45")).map(_.returnWindow) shouldBe
+      Right(Duration.ofSeconds(45))
+    Seq("0", "-3", "soon").foreach: value =>
+      NodeConfig.fromEnv(Map("NODE_ROLE" -> "backup", "RETURN_WINDOW_SECONDS" -> value)).isLeft shouldBe true
+
   test("the Docker socket is the standard one unless DOCKER_SOCKET says otherwise"):
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby")).map(_.dockerSocket) shouldBe Right("/var/run/docker.sock")
     NodeConfig.fromEnv(Map("NODE_ROLE" -> "lobby", "DOCKER_SOCKET" -> "/tmp/docker.sock")).map(_.dockerSocket) shouldBe

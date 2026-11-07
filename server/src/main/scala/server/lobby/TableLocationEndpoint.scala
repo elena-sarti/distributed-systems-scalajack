@@ -5,7 +5,7 @@ import protocol.LobbyApi.{ApiError, LocateRequest, TableAddress}
 import server.auth.{JsonPostEndpoint, SessionTokens}
 import server.db.BalanceRepository
 
-/** `POST /tables/locate`: a logged in player who lost the connection with their table (e.g. its node failed and the
+/** `POST /locate`: a logged in player who lost the connection with their table (e.g. its node failed and the
  * backup took over) asks where the table is now. The lobby answers with the address the table has in its registry, which
  * is the one of the node that plays it at this moment, so the client does not need to know that a failover happened.
  *
