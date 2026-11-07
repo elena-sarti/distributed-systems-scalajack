@@ -19,6 +19,14 @@ class PostgresBalanceRepositoryTest extends PostgresSuite:
     balances.balanceOf("Alice") shouldBe Some(BalanceRepository.InitialBalance)
     balances.balanceOf("Nobody") shouldBe None
 
+  test("the table where a user is sitting is known, ignoring the case, until they leave"):
+    balances.tableOf("Alice") shouldBe None
+    balances.sitDown("Alice", "table-1")
+    balances.tableOf("alice") shouldBe Some("table-1")
+    balances.standUp("Alice", "table-1", 100.0)
+    balances.tableOf("Alice") shouldBe None
+    balances.tableOf("Nobody") shouldBe None
+
   test("sitting down gives the balance; leaving saves it, and the next table finds it"):
     balances.sitDown("Alice", "table-1") shouldBe Right(100.0)
     balances.standUp("Alice", "table-1", 152.5) shouldBe true

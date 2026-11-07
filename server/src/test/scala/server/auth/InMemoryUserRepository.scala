@@ -23,6 +23,8 @@ final class InMemoryUserRepository extends UserRepository, BalanceRepository:
 
   def balanceOf(username: String): Option[Double] = synchronized(rows.get(username.toLowerCase).map(_.balance))
 
+  def tableOf(username: String): Option[String] = synchronized(rows.get(username.toLowerCase).flatMap(_.tableId))
+
   def sitDown(username: String, tableId: String): Either[SitDownError, Double] = synchronized:
     rows.get(username.toLowerCase) match
       case None => Left(SitDownError.UnknownUser)

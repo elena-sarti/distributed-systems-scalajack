@@ -11,6 +11,7 @@ object BrokenRepository extends UserRepository:
 /** Balances whose database cannot be reached. */
 object BrokenBalances extends BalanceRepository:
   def balanceOf(username: String): Option[Double] = unreachable()
+  def tableOf(username: String): Option[String] = unreachable()
   def sitDown(username: String, tableId: String): Either[SitDownError, Double] = unreachable()
   def standUp(username: String, tableId: String, balance: Double): Boolean = unreachable()
   def releaseTable(tableId: String): Unit = unreachable()

@@ -24,6 +24,9 @@ final class PostgresBalanceRepository(database: Database) extends BalanceReposit
   def balanceOf(username: String): Option[Double] =
     select(username)(rows => rows.getBigDecimal("balance").doubleValue)
 
+  def tableOf(username: String): Option[String] =
+    select(username)(rows => Option(rows.getString("table_id"))).flatten
+
   def sitDown(username: String, tableId: String): Either[SitDownError, Double] =
     val balance = withStatement(SitDownSql): statement =>
       statement.setString(1, tableId)

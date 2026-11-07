@@ -18,6 +18,9 @@ trait BalanceRepository:
   /** The user's balance, if the user exists. */
   def balanceOf(username: String): Option[Double]
 
+  /** The table where the user is sitting, if they are sitting anywhere (and also if the user does not exist). */
+  def tableOf(username: String): Option[String]
+
   /** Marks the user as sitting at the table and returns their balance. Sitting down again at the same
    * table is allowed (e.g. after reconnecting); at any other table it is refused. */
   def sitDown(username: String, tableId: String): Either[SitDownError, Double]
