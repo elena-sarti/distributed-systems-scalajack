@@ -14,6 +14,9 @@ class TableReconnectionTest extends AnyFunSuite:
   private final class ScriptedLobby(script: LocateAnswer*) extends LobbyConnection:
     private val answers = Ref.unsafe[IO, List[LocateAnswer]](script.toList)
     val tokens          = Ref.unsafe[IO, List[String]](Nil)
+    def register(username: String, password: String) = IO.pure(Left("not used here"))
+    def login(username: String, password: String)    = IO.pure(Left("not used here"))
+    def assign(token: String)                        = IO.pure(SeatAnswer.Refused("not used here"))
     def locate(token: String): IO[LocateAnswer] =
       tokens.update(_ :+ token) *> answers.modify:
         case only :: Nil  => (List(only), only)

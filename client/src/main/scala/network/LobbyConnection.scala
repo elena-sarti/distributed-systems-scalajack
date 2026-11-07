@@ -2,7 +2,8 @@ package network
 
 import cats.effect.IO
 import protocol.LobbyApi
-import protocol.LobbyApi.{LocateRequest, TableAddress}
+import protocol.LobbyApi.{ApiError, AssignRequest, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress, TableStarting}
+import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration as JDuration
@@ -20,32 +21,79 @@ enum LocateAnswer:
   /** No answer from the lobby. */
   case Unreachable
 
-/** The client's view of the lobby. */
+/** What the lobby says to a player who asks for a seat. */
+enum SeatAnswer:
+  /** A seat is kept for the player at this table: connect there. */
+  case Assigned(address: TableAddress)
+  /** All the tables are full and a new one is starting: ask again in a few seconds. */
+  case Starting(tableId: String)
+  /** No seat now (e.g. the server is full), or the lobby cannot be reached: the reason, for the player. */
+  case Refused(reason: String)
+
+/** The client's view of the lobby. Nothing here fails: the problems are answers, with a reason for the player. */
 trait LobbyConnection:
-  /** Where the table of the player with this session token is now. Never fails: problems are answers. */
+  /** Creates a new user. */
+  def register(username: String, password: String): IO[Either[String, Unit]]
+
+  /** The session of the user: the token to show to the tables, and the balance. */
+  def login(username: String, password: String): IO[Either[String, LoggedIn]]
+
+  /** A seat at a table with room for the player. */
+  def assign(token: String): IO[SeatAnswer]
+
+  /** Where the table of the player with this session token is now. */
   def locate(token: String): IO[LocateAnswer]
 
 /** The lobby reached over its HTTP API, with the JDK's client.
  *
  * @param baseUrl the address of the lobby, e.g. `http://localhost:9080`. */
 final class HttpLobbyConnection(baseUrl: String) extends LobbyConnection:
-  private val http    = HttpClient.newBuilder().connectTimeout(HttpLobbyConnection.Timeout).build()
-  private val locator = URI.create(baseUrl.stripSuffix("/") + LobbyApi.LocatePath)
+  import HttpLobbyConnection.*
+
+  private val http = HttpClient.newBuilder().connectTimeout(Timeout).build()
+
+  def register(username: String, password: String): IO[Either[String, Unit]] =
+    post(LobbyApi.RegisterPath, RegisterRequest(username, password)).map:
+      case Some((201, _))      => Right(())
+      case Some((_, body))     => Left(reasonIn(body))
+      case None                => Left(Unreachable)
+
+  def login(username: String, password: String): IO[Either[String, LoggedIn]] =
+    post(LobbyApi.LoginPath, LoginRequest(username, password)).map:
+      case Some((200, body))   => LobbyApi.decode[LoggedIn](body)
+      case Some((_, body))     => Left(reasonIn(body))
+      case None                => Left(Unreachable)
+
+  def assign(token: String): IO[SeatAnswer] =
+    post(LobbyApi.AssignPath, AssignRequest(token)).map:
+      case Some((200, body)) => LobbyApi.decode[TableAddress](body).fold(SeatAnswer.Refused(_), SeatAnswer.Assigned(_))
+      case Some((202, body)) => LobbyApi.decode[TableStarting](body).fold(SeatAnswer.Refused(_), s => SeatAnswer.Starting(s.tableId))
+      case Some((_, body))   => SeatAnswer.Refused(reasonIn(body))
+      case None              => SeatAnswer.Refused(Unreachable)
 
   def locate(token: String): IO[LocateAnswer] =
-    val request = HttpRequest.newBuilder(locator).timeout(HttpLobbyConnection.Timeout)
+    post(LobbyApi.LocatePath, LocateRequest(token)).map:
+      case Some((200, body))   => LobbyApi.decode[TableAddress](body).fold(_ => LocateAnswer.Refused(200), LocateAnswer.Found(_))
+      case Some((404, _))      => LocateAnswer.NotSeated
+      case Some((503, _))      => LocateAnswer.NotReachableYet
+      case Some((status, _))   => LocateAnswer.Refused(status)
+      case None                => LocateAnswer.Unreachable
+
+  /** Status and body of the answer, or `None` if the lobby did not answer. */
+  private def post[T: ReadWriter](path: String, body: T): IO[Option[(Int, String)]] =
+    val request = HttpRequest.newBuilder(URI.create(baseUrl.stripSuffix("/") + path)).timeout(Timeout)
       .header("Content-Type", "application/json")
-      .POST(HttpRequest.BodyPublishers.ofString(LobbyApi.encode(LocateRequest(token))))
+      .POST(HttpRequest.BodyPublishers.ofString(LobbyApi.encode(body)))
       .build()
     IO.fromCompletableFuture(IO(http.sendAsync(request, HttpResponse.BodyHandlers.ofString())))
-      .map(response => answer(response.statusCode(), response.body()))
-      .handleError(_ => LocateAnswer.Unreachable)
-
-  private def answer(status: Int, body: String): LocateAnswer = status match
-    case 200 => LobbyApi.decode[TableAddress](body).fold(_ => LocateAnswer.Refused(status), LocateAnswer.Found(_))
-    case 404 => LocateAnswer.NotSeated
-    case 503 => LocateAnswer.NotReachableYet
-    case _   => LocateAnswer.Refused(status)
+      .map(response => Option((response.statusCode(), response.body())))
+      .handleError(_ => None)
 
 object HttpLobbyConnection:
   private val Timeout = JDuration.ofSeconds(5)
+
+  val Unreachable = "The lobby cannot be reached: check that the server is running, then try again"
+
+  /** The reason the lobby gives in its error, or a generic one. */
+  private def reasonIn(body: String): String =
+    LobbyApi.decode[ApiError](body).fold(_ => "The lobby refused the request", _.reason)
