@@ -48,6 +48,10 @@ final class Lobby(baseUrl: String):
 /** The connection of a player to a table: what the table sends is queued, in order, until the demo looks at it. */
 final class TableConnection private (socket: WebSocket, inbox: LinkedBlockingQueue[Option[ServerMessage]]):
   @volatile private var open = true
+  @volatile private var table = Option.empty[protocol.TableView]
+
+  /** The last view of the table among the messages looked at so far. */
+  def lastTable: Option[protocol.TableView] = table
 
   def send(message: ClientMessage): Unit =
     Try(socket.sendText(MessageCodec.encode(message), true).get(5, TimeUnit.SECONDS))
@@ -58,7 +62,11 @@ final class TableConnection private (socket: WebSocket, inbox: LinkedBlockingQue
     var result = Option.empty[T]
     while result.isEmpty && open && Instant.now().isBefore(end) do
       Option(inbox.poll(Duration.between(Instant.now(), end).toMillis.max(1), TimeUnit.MILLISECONDS)) match
-        case Some(Some(message)) => result = wanted.lift(message)
+        case Some(Some(message)) =>
+          message match
+            case TableUpdate(view) => table = Some(view)
+            case _                 => ()
+          result = wanted.lift(message)
         case Some(None)          => open = false
         case None                => ()
     result
@@ -144,14 +152,8 @@ final class Player private (lobby: Lobby, val name: String, token: String, val i
 
   /** What the table shows of this player once nothing more arrives for `quiet`: the state the player is left in. */
   def settledView(seat: Seat, quiet: Duration = Duration.ofSeconds(1)): Option[PlayerView] =
-    var last = Option.empty[PlayerView]
-    var more = true
-    while more do
-      seat.connection.await(quiet) { case message => message } match
-        case Some(TableUpdate(table)) => last = table.players.find(_.name == name).orElse(last)
-        case Some(_)                  => ()
-        case None                     => more = false
-    last
+    while seat.connection.await(quiet) { case message => message }.isDefined do ()
+    seat.connection.lastTable.flatMap(_.players.find(_.name == name))
 
   /** The first view of the table that shows this player: right after sitting down again, the state of the seat. */
   def awaitView(seat: Seat, timeout: Duration = Duration.ofSeconds(5)): Option[PlayerView] =
