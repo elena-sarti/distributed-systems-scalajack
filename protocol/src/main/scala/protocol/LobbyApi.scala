@@ -41,6 +41,14 @@ object LobbyApi:
    * [[StartGranted]], or by 409 and an [[ApiError]] while another node is playing the table (e.g. its promoted backup). */
   val StartPath = "/tables/start"
 
+  /** `POST` a [[LocateRequest]] (a logged in player who lost the connection with their table, e.g. after a failover, asking
+   * where it is now): answered by
+   * - 200 and a [[TableAddress]]: connect to that table, directly, and sit down again with the same name: the seat is yours;
+   * - 404 and an [[ApiError]]: the player is not seated anywhere (the seat has been given up: ask for a new one with `/assign`);
+   * - 503 and an [[ApiError]]: the table is not reachable yet (the backup is taking over): try again in a moment;
+   * - 401: invalid token. */
+  val LocatePath = "/tables/locate"
+
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
@@ -96,6 +104,9 @@ object LobbyApi:
   final case class StartGranted(tableId: String, epoch: Long) derives ReadWriter
 
   /** The token proves that the player is logged in: the same one the table will ask for at the WebSocket handshake. */
+  final case class LocateRequest(token: String) derives ReadWriter:
+    override def toString: String = "LocateRequest(***)"
+
   final case class AssignRequest(token: String) derives ReadWriter:
     override def toString: String = "AssignRequest(***)"
 
