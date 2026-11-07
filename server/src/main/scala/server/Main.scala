@@ -3,7 +3,7 @@ package server
 import com.sun.net.httpserver.HttpHandler
 import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
-import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PrimaryStartEndpoint, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
+import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PrimaryStartEndpoint, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableLocationEndpoint, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
 import server.liveness.{FailureDetector, LoggingFailureListener, ObservedLobbyGateway, Peer}
 import server.replication.{BackupExcluder, BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
@@ -204,12 +204,13 @@ object Main:
   /** The HTTP API of the lobby, next to /health. */
   private def lobbyRoutes(database: Database, tokens: SessionTokens, registry: TableRegistry,
                           dispatcher: TableDispatcher, backups: FailureDetector[String]): Map[String, HttpHandler] =
-    val users   = PostgresUserRepository(database)
+    val users    = PostgresUserRepository(database)
+    val balances = PostgresBalanceRepository(database)
     val hasher  = Pbkdf2PasswordHasher()
     val arbiter = PromotionArbiter(registry, backups.forget) // a backup that becomes the primary is no longer watched as a backup
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
-      LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, PostgresBalanceRepository(database), hasher, tokens)),
+      LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, balances, hasher, tokens)),
       // a replicated table tells its epoch: a primary that has been replaced is refused
       LobbyApi.TableRegisterPath  -> TableRegistrationEndpoint(registry, arbiter),
       LobbyApi.TableHeartbeatPath -> TableHeartbeatEndpoint(registry, arbiter),
@@ -218,6 +219,7 @@ object Main:
       LobbyApi.PromotionPath       -> PromotionEndpoint(arbiter),
       LobbyApi.ExclusionPath       -> BackupExclusionEndpoint(arbiter),
       LobbyApi.StartPath           -> PrimaryStartEndpoint(arbiter),
+      LobbyApi.LocatePath -> TableLocationEndpoint(balances, registry, tokens), // where is my table now? (after a failover)
       LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
     )
 

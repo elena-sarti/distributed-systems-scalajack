@@ -7,6 +7,7 @@ import utils.ModelExports.{Deck, Game, StandardCard, Suit, Value}
 import utils.TestExports.*
 import java.time.Instant
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.duration.*
 
 class TableTakeoverTest extends AnyFunSuite:
 
@@ -35,21 +36,24 @@ class TableTakeoverTest extends AnyFunSuite:
     val table = TableTakeover.resume(None, RecordingCashier())
     table.freeSeats shouldBe Game.MaxPlayersNum
 
-  test("players seated while the bets are being placed are given their money back: their clients are gone"):
+  test("the players keep their seats while they have time to come back: nobody is given up at the take over"):
     val cashier = RecordingCashier()
     val table   = TableTakeover.resume(Some(stateAfter()), cashier)
-    cashier.returned.toSet shouldBe Set("Alice", "Bob")
-    table.freeSeats shouldBe Game.MaxPlayersNum
+    table.onTick()
+    cashier.returned shouldBe empty
+    table.freeSeats shouldBe Game.MaxPlayersNum - 2
 
-  test("a bet placed before the cards are dealt goes back to the player"):
+  test("a bet placed before the cards are dealt goes back to the player who does not come back"):
     val cashier = RecordingCashier()
-    TableTakeover.resume(Some(stateAfter("Alice" -> PlaceBet(10))), cashier) // Bob has not bet yet
+    val table   = TableTakeover.resume(Some(stateAfter("Alice" -> PlaceBet(10))), cashier, returnWindow = 0.seconds) // Bob has not bet yet
+    table.onTick() // the time to come back is over
     cashier.balances.toSet shouldBe Set("Alice" -> TableHandler.DefaultBalance, "Bob" -> TableHandler.DefaultBalance)
 
-  test("a hand in progress is settled without waiting for anybody, and then the seats are free"):
+  test("a hand in progress is settled without waiting for anybody who does not come back, and then the seats are free"):
     val cashier = RecordingCashier()
     val state   = stateAfter("Alice" -> PlaceBet(10), "Bob" -> PlaceBet(20)) // Alice's turn
-    val table   = TableTakeover.resume(Some(state), cashier)
+    val table   = TableTakeover.resume(Some(state), cashier, returnWindow = 0.seconds)
+    table.onTick()
     cashier.returned.toSet shouldBe Set("Alice", "Bob")
     table.freeSeats shouldBe Game.MaxPlayersNum
 

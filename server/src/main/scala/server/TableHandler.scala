@@ -59,6 +59,9 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   /** When the wait for the current decision runs out, if the table is waiting for one (see [[enter]]). */
   private var deadline: Option[Instant] = None
 
+  /** After a take over (see [[awaitReturn]]): when the players whose clients have not come back give up their seats. */
+  private var returnDeadline: Option[Instant] = None
+
   /** Everything needed to rebuild this table elsewhere (see [[TableSnapshot]]). */
   def snapshot: TableSnapshot =
     val seated = seats.values.map(seat => seat.player.name -> seat.connected).toMap
@@ -110,7 +113,8 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   def onMessage(connection: Connection, message: ClientMessage): Unit =
     seats.get(connection.id) match
       case None => message match
-        case JoinTable(name) => join(connection, name)
+        // a player who was seated before the take over comes back to their seat; anybody else sits down
+        case JoinTable(name) => waitingSeat(name).fold(join(connection, name))(resume(connection, _))
         case _               => connection.send(ErrorMessage(JoinFirst))
       case Some(seat) => message match
         case JoinTable(_)            => seat.send(ErrorMessage(AlreadySeated))
@@ -142,7 +146,57 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   /** Time passes. If the table has been waiting too long for a decision it decides for who is late (no bet: the player sits out of the hand,
    * no insurance: the hand stands), so a client that stays silent can never block the others. */
   override def onTick(): Unit =
+    returnDeadline.filter(limit => !clock().isBefore(limit)).foreach(_ => giveUpWaiting())
     if deadline.exists(limit => !clock().isBefore(limit)) then decisionTimedOut()
+
+  /** The table has been taken over from a failed node: the seated players are still here, but their clients are not.
+   * For `window` the table waits for them to come back (see [[resume]]) and does not decide for anybody before that;
+   * then the seats of the ones who did not come back are given up like those of a client that drops (C5), and
+   * the table never blocks for them.
+   *
+   * Call it right after [[restore]], before the table is used. */
+  def awaitReturn(window: FiniteDuration): Unit =
+    val limit = clock().plusMillis(window.toMillis)
+    returnDeadline = Some(limit)
+    // the old deadline is the failed node's: nobody can be late for a decision before they have had the time to come back
+    deadline = deadline.map(current => if current.isBefore(limit) then limit else current)
+
+  /** The seat of a player whose client has not come back yet, if there is one. */
+  private def waitingSeat(name: String): Option[Seat] = seats.get(Absent(name).id).filter(_.connected)
+
+  /** A client comes back to the seat it had before the take over: it gets its seat, the table as it is and,
+   * if the table is waiting for something from it, the same request it was answering, so the hand goes on from the
+   * point where it was. Nothing goes through the cashier: the player is already seated, with their balance. */
+  private def resume(connection: Connection, waiting: Seat): Unit =
+    val seat = waiting.copy(connection = connection)
+    seats = seats - waiting.connection.id + (connection.id -> seat)
+    seat.send(JoinAccepted(seat.player.name, seat.player.balance.totalValue))
+    broadcastTable() // the returned client sees the table, the others see that it is back
+    askAgain(seat)
+
+  /** Repeats to the seat what the table is waiting for from it right now, if anything (the request was sent to the old node). */
+  private def askAgain(seat: Seat): Unit = phase match
+    case Phase.Betting if !hasBet(seat.player) => requestBet(seat)
+    case Phase.Insurance(awaiting, _) if awaiting.contains(seat.player.name) => seat.send(InsuranceOffer)
+    case Phase.Turn(hand) if belongsTo(hand, seat) =>
+      seat.send(ActionRequest(hand.name, game.canDoubleDown(hand), game.canSplit(hand)))
+    case _ => ()
+
+  /** The time to come back is over: the players still absent are treated as disconnected. If no cards have been dealt
+   * the failure is not their fault, so the bets they placed go back to them; from the deal on, their hands stand. */
+  private def giveUpWaiting(): Unit =
+    returnDeadline = None
+    val absent = seats.values.filter(seat => seat.connected && seat.connection.isInstanceOf[Absent]).toList
+    absent.foreach: gone =>
+      seats.get(gone.connection.id).foreach: seat => // the seats change while the others leave: look again
+        phase match
+          case Phase.Idle | Phase.Betting => leave(seat, refund = betsOf(seat))
+          case _                          => disconnect(seat)
+
+  /** What the player has bet on the table in this hand. */
+  private def betsOf(seat: Seat): Double =
+    val hands = handsOf(seat)
+    game.currentBets.filter(bet => hands.contains(bet.player)).map(_.amount).sum
 
   private def decisionTimedOut(): Unit = phase match
     case Phase.Betting => betTimedOut()
@@ -197,7 +251,8 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     else if game.isNameValid(name) then Some(NameTaken) // isNameValid = "a player with this name exists"
     else None
 
-  private def leave(seat: Seat): Unit =
+  /** @param refund money that goes back to the player besides their balance (the bet that was on the table). */
+  private def leave(seat: Seat, refund: Double = 0.0): Unit =
     val hands = handsOf(seat) // the player's own hand and, after a split, the hands split from it
     val next = phase match // computed while the hands are still in the turn order
       case Phase.Turn(current) if hands.contains(current) => nextToPlay(after = current, excluding = hands)
@@ -206,7 +261,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     game.removeLeavingPlayers(hands)
     game.currentBets = game.currentBets.filterNot(bet => hands.contains(bet.player)) // a bet left on the table is lost
     seats = seats - seat.connection.id
-    standUp(seat, money)
+    standUp(seat, money + refund)
     if seats.isEmpty then abandonHand()
     else phase match
       case Phase.Betting =>
