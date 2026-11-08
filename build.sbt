@@ -55,7 +55,10 @@ lazy val client = project
       "org.java-websocket" %  "Java-WebSocket" % "1.6.0"  % Test, // fake table server for the network tests
       "org.slf4j"          %  "slf4j-simple"   % "2.0.13" % Test
     ),
-    Compile / mainClass := Some("controller.GameController"),
+    Compile / mainClass := Some("controller.OnlineGame"), // the local game of the first version: controller.GameController
+    run / fork := true,              // the game reads the keyboard: in its own JVM, connected to the terminal
+    run / connectInput := true,
+    outputStrategy := Some(StdoutOutput),
     assembly / assemblyOutputPath := file("./scalajack-client.jar")
   )
 
