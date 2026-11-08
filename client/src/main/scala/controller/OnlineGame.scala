@@ -3,7 +3,7 @@ package controller
 import cats.effect.{ExitCode, Fiber, Resource}
 import cats.effect.std.Queue
 import network.*
-import protocol.{ClientMessage, ServerMessage}
+import protocol.{ClientMessage, ServerMessage, TableView}
 import protocol.ClientMessage.*
 import protocol.LobbyApi.{LoggedIn, TableAddress}
 import protocol.ServerMessage.*
@@ -46,12 +46,14 @@ enum TableOutcome:
  * @param waitStart         how long to wait before asking again for a seat while a new table is starting.
  * @param discardTypedAhead forgets what the player typed before a new question appeared.
  * @param liveCountdown     whether the time left is rewritten every second (only on a real terminal).
+ * @param dealerPause       the pause before showing each move of the dealer, as a real dealer takes time to turn a card.
  */
 final class OnlineSession(lobby: LobbyConnection,
                           connect: TableReconnection.Connect = (uri, token) => WebSocketConnection.connect(uri, Some(token)),
                           waitStart: FiniteDuration = 3.seconds,
                           discardTypedAhead: IO[Unit] = IO.unit,
-                          liveCountdown: Boolean = false)(using Console[IO]):
+                          liveCountdown: Boolean = false,
+                          dealerPause: FiniteDuration = 1.second)(using Console[IO]):
   import OnlineSession.*
 
   def run: IO[Unit] = signIn.flatMap(playUntilDone)
@@ -115,7 +117,8 @@ final class OnlineSession(lobby: LobbyConnection,
         footer   = left.fold("")(seconds => "\n" + OnlineView.timeLeft(seconds))
         counting = state.deadline.filter(_ => liveCountdown).fold(question(footer))(countDown(_).background.surround(question(footer)))
         fiber   <- counting.flatMap(answer => events.offer(Event.Answered(id, answer))).start
-        outcome <- react(session, connection, events, State(Some(Question(id, fiber, reminder, state.deadline)), id + 1, None))
+        outcome <- react(session, connection, events,
+                     state.copy(asking = Some(Question(id, fiber, reminder, state.deadline)), nextQuestion = id + 1, deadline = None))
       yield outcome
 
     events.take.flatMap:
@@ -140,13 +143,22 @@ final class OnlineSession(lobby: LobbyConnection,
         case ServerMessage.GameOver(balances) =>
           withdraw(asking) >> OnlineView.renderGameOver(balances).as(TableOutcome.GameOver)
         case JoinAccepted(_, balance)   => OnlineView.info(s"You are at the table with $balance fiches.\n") >> next()
-        case TableUpdate(table)         => OnlineView.renderTable(table, me) >> asking.traverse_(remind) >> next()
+        case TableUpdate(table) =>
+          IO.whenA(state.shown.exists(dealerMoves(_, table)))(IO.sleep(dealerPause)) >>
+            OnlineView.renderTable(table, me) >> asking.traverse_(remind) >>
+            react(session, connection, events, state.copy(shown = Some(table)))
         case HandResults(balances)      => OnlineView.renderResults(balances) >> next()
         case ErrorMessage(reason)       => OnlineView.info(s"The table says: $reason") >> next()
       case Event.FromTable(ConnectionEvent.Invalid(_))      => next() // a message this client does not understand: nothing to show
       case Event.FromTable(ConnectionEvent.Disconnected(_)) => withdraw(asking) >> comeBack(session)
 
   private def withdraw(asking: Option[Question]): IO[Unit] = asking.traverse_(_.fiber.cancel)
+
+  /** The dealer turns the face-down card or draws one more: a move of its own turn, not of the deal. */
+  private def dealerMoves(before: TableView, after: TableView): Boolean =
+    val turned = before.dealer.hiddenCards > 0 && after.dealer.hiddenCards == 0 && after.dealer.visibleCards.size >= 2
+    val drew   = before.dealer.visibleCards.size >= 2 && after.dealer.visibleCards.size > before.dealer.visibleCards.size
+    turned || drew
 
   /** The question again, short, under the table just shown: with the time left on its own line, which the countdown
    * rewrites from now on. */
@@ -193,5 +205,7 @@ private object OnlineSession:
    * is when the table stops waiting for the answer. */
   final case class Question(id: Int, fiber: Fiber[IO, Throwable, Unit], reminder: String, deadline: Option[FiniteDuration])
 
-  /** The question on the screen, the id of the next one, and the time to answer announced for it by the table. */
-  final case class State(asking: Option[Question] = None, nextQuestion: Int = 0, deadline: Option[FiniteDuration] = None)
+  /** The question on the screen, the id of the next one, the time to answer announced for it by the table, and the
+   * table last shown. */
+  final case class State(asking: Option[Question] = None, nextQuestion: Int = 0, deadline: Option[FiniteDuration] = None,
+                         shown: Option[TableView] = None)

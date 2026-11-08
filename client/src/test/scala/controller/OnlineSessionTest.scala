@@ -213,3 +213,26 @@ class OnlineSessionTest extends AnyFunSuite:
         _         <- player.joinWithNever
       yield shown
     scenario.timeout(10.seconds).unsafeRunSync() should include regex "Type your bet.*\\n(Time left: (30|29) s)"
+
+  /** The table with the dealer showing `visible` cards and holding `hidden` face down. */
+  private def dealerShowing(visible: Int, hidden: Int) =
+    view(2).copy(dealer = protocol.DealerView(List.fill(visible)(Nine), hidden), currentTurn = None)
+
+  test("every move of the dealer is shown after a pause, as if the dealer were turning the cards"):
+    val pause = 300.millis
+    val scenario =
+      for
+        keys      <- Queue.unbounded[IO, String]
+        fromTable <- Queue.unbounded[IO, ConnectionEvent]
+        console    = SlowConsole(keys)
+        table      = PushedTable(fromTable)
+        _         <- { given Console[IO] = console; OnlineSession(FakeLobby(), table.connect, dealerPause = pause).play(Session, Table1).start }
+        _         <- table.push(TableUpdate(dealerShowing(1, 1)))                // the deal: shown at once
+        _         <- eventually(console.shown.contains("SCORE: 18"))
+        start     <- IO.monotonic
+        _         <- table.push(TableUpdate(dealerShowing(2, 0)))                // the reveal
+        _         <- table.push(TableUpdate(dealerShowing(3, 0)))                // a card drawn
+        _         <- eventually(console.shown.split("\\[Dealer\\]").length == 4)
+        end       <- IO.monotonic
+      yield end - start
+    scenario.timeout(10.seconds).unsafeRunSync() should be >= (pause * 2)

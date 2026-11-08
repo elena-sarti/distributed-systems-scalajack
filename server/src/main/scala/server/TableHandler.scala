@@ -6,6 +6,7 @@ import protocol.ServerMessage.*
 import server.replication.{GameSnapshots, PhaseSnapshot, SeatSnapshot, TableSnapshot}
 import utils.ModelExports.*
 import java.time.Instant
+import scala.annotation.tailrec
 import scala.concurrent.duration.*
 
 /** The logic of one table: who is seated and how a hand is played through the clients' messages.
@@ -428,12 +429,20 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     enter(Phase.DealerTurn)
     revealDealerCard()
     game.resolveInsurances() // same order as the local game
-    game.computeDealerTurn() // the card is already face up: the dealer draws up to 17
+    dealerDraws()
     game.handlePayout()
     broadcastTable()         // the dealer's final hand, and the new balances
     val results = HandResults(game.balances(seatedPlayers))
     seats.values.foreach(_.send(results))
     endHand()
+
+  /** The dealer draws up to 17, one card at a time, and the clients see every card as it comes: the last one arrives
+   * with the payout. The same rule as the local game (computeDealerTurn), which draws them all at once. */
+  @tailrec
+  private def dealerDraws(): Unit =
+    if !game.dealer.hasFinishedTurn && game.drawCard(game.dealer).isDefined then
+      if !game.dealer.hasFinishedTurn then broadcastTable()
+      dealerDraws()
 
   /** The reveal: the face-down card is turned and, only from this moment on, it is part of the
    * snapshots sent to the clients. Before this point it exists only in the memory of the table node. */
