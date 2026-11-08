@@ -37,10 +37,10 @@ object OnlineView:
     yield Credentials(account, username, password)
 
   /** The bet for the next hand, or the wish to leave the table. The table checks the bet again. */
-  def askBet(balance: Double, minBet: Int)(using console: Console[IO]): IO[BetChoice] =
+  def askBet(balance: Double, minBet: Int, footer: String = "")(using console: Console[IO]): IO[BetChoice] =
     promptUntilValid(
       prompt = s"Your balance is $balance fiches. Type your bet for the next hand (a multiple of $minBet), " +
-        "or \"L\" to leave the table.",
+        s"or \"L\" to leave the table.$footer",
       parser = input =>
         if input.equalsIgnoreCase("L") then Some(BetChoice.Leave) else input.toIntOption.map(BetChoice.Bet(_)),
       predicate =
@@ -52,10 +52,27 @@ object OnlineView:
       errorMessage = s"Sorry, your bet must be a multiple of $minBet fiches (and at least $minBet), " +
         s"and it cannot exceed your balance ($balance fiches).")
 
-  def askInsurance(using console: Console[IO]): IO[Boolean] =
-    yesOrNo("The dealer shows an Ace! Do you want to buy the insurance, for half of your bet? (Y/N)")
+  def askInsurance(footer: String = "")(using console: Console[IO]): IO[Boolean] =
+    yesOrNo(s"The dealer shows an Ace! Do you want to buy the insurance, for half of your bet? (Y/N)$footer")
 
-  def askToPlayAgain(using console: Console[IO]): IO[Boolean] = yesOrNo("Do you want to sit at a table again? (Y/N)")
+  /** The line with the time left to answer, shown under a question. */
+  def timeLeft(seconds: Long): String = s"Time left: $seconds s"
+
+  /** Writes the time left again on the line right above the cursor (the one written by [[timeLeft]]), leaving the
+   * cursor where it is: the player may be typing there. Uses the ANSI sequences of the terminals: save the cursor,
+   * go one line up, rewrite the line, go back. */
+  def refreshTimeLeft(seconds: Long)(using console: Console[IO]): IO[Unit] =
+    console.print(s"\u001b7\u001b[1A\r${timeLeft(seconds)}\u001b[K\u001b8")
+
+  /** Short forms of the questions, repeated under the table when it changes while the player has not answered yet. */
+  def betReminder(minBet: Int): String = s"Waiting for your bet (a multiple of $minBet), or \"L\" to leave the table."
+  val insuranceReminder: String = "Waiting for your answer: do you want the insurance? (Y/N)"
+  def actionReminder(canDoubleDown: Boolean, canSplit: Boolean): String =
+    val options = List("\"D\" draw", "\"S\" stand") ++ Option.when(canDoubleDown)("\"O\" double down") ++
+      Option.when(canSplit)("\"P\" split")
+    s"Waiting for your action: ${options.mkString(", ")}."
+
+  def askToPlayAgain(using console: Console[IO]): IO[Boolean] =yesOrNo("Do you want to sit at a table again? (Y/N)")
 
   /** The table as a player sees it: the dealer, then every player with cards, score, bet and balance. */
   def describeTable(table: TableView, me: String): String =
@@ -82,7 +99,7 @@ object OnlineView:
   def renderTimeUp(decision: Decision)(using console: Console[IO]): IO[Unit] = console.println(decision match
     case Decision.Bet       => "Time is up: you sit out this hand.\n"
     case Decision.Insurance => "Time is up: no insurance for you.\n"
-    case Decision.Action    => "Time is up: your hand stands.\n")
+    case Decision.Action    => "Time is up: the table plays your hand (a card while it is worth less than 12, then it stands).\n")
 
   def info(text: String)(using console: Console[IO]): IO[Unit] = console.println(text)
 

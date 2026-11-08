@@ -148,10 +148,10 @@ Implements the first row of the promotion table: the primary is silent for the l
 
 Choices worth knowing:
 
-- **The players of the failed primary are treated as disconnected** (as in C5): their hands stand, the hand is settled
-  without waiting, each seat is freed at the end of the hand and the balance is saved. This keeps the database
-  consistent (nobody stays marked as sitting at a table nobody plays at). Resuming the hand for a client that comes back
-  is F7. If the cards had not been dealt yet, the hand is cancelled instead and the bets go back to the players: they
+- **The players of the failed primary are treated as disconnected** (as in C5): the table plays their hands (see G1),
+  the hand is settled without waiting, each seat is freed at the end of the hand and the balance is saved. This keeps
+  the database consistent (nobody stays marked as sitting at a table nobody plays at). Resuming the hand for a client
+  that comes back is F7. If the cards had not been dealt yet, the hand is cancelled instead and the bets go back to the players: they
   are not to blame for the failure.
 - The promoted node does **not** release the players at start-up, unlike a fresh table.
 - A primary that comes back after the promotion (restart or healed partition) is fenced by the lobby: see "A replaced
@@ -225,7 +225,7 @@ Tables that are not replicated (no backup) send no epoch and are never refused.
   its name gets its seat back, with the same cards and balance, and the request the table was waiting for from it:
   the hand goes on from where it was.
 - When the time is over, the players who have not come back are treated as clients that dropped (C5): before the deal
-  their bets go back to them, after it their hands stand.
+  their bets go back to them, after it the table plays their hands.
 
 ## Every table has its backup (F8)
 
@@ -234,3 +234,20 @@ The pool tables (`table-2`, `table-3`) are replicated like `table-1`: each one h
 `919n` after a promotion). When the lobby starts a table of the pool it starts its backup first, so that the table can
 replicate from its first move; a backup that does not exist or cannot be started does not keep the table down: the table
 is paused until the lobby lets it go on alone (F5), as if the backup had failed.
+
+## Players who do not answer, and the time left (G1)
+
+The table does not wait for anybody: every decision (the bet, the insurance, the action) has 30 seconds, as in the live
+blackjack of online casinos. What the table decides for a late player:
+
+- no bet: the player sits out the hand and keeps the seat;
+- no answer to the insurance: no insurance;
+- no action, or the client is gone, with a bet on the hand: **the table plays the hand** with the rule of the live
+  casinos: one more card while it is worth less than 12 (no card can bust it), then it stands. Before this choice the
+  hand simply stood, which wastes a hand worth 5 for a player whose connection dropped.
+
+Every request is preceded by `TimeToDecide(seconds)`, the time left before the table decides. It is a number of seconds
+and not a time of day, so that the client counts down with its own clock: the clocks of the client and of the table
+node never have to agree. A player who sits down while the others are betting gets the time that is left, not a new
+one. The client shows the countdown under the question and withdraws the question when the time is over: an answer
+typed too late is never sent.

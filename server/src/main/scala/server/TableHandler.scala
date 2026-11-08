@@ -135,16 +135,17 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
       recordInsuranceAnswers(awaiting - seat.player.name, accepted) // no answer: no insurance (unless already bought)
     case Phase.Turn(current) =>
       keepUntilEndOfHand(seat)
-      if belongsTo(current, seat) then stand(current) // it was their turn: the hand stands now
-    // otherwise their hands stand when their turn comes (see startTurn)
+      if belongsTo(current, seat) then playForAbsent(current) // it was their turn: the table finishes the hand now
+    // otherwise the table plays their hands when their turn comes (see startTurn)
     case _ => leave(seat) // betting, or no hand at all
 
   /** The seat stays, but nothing is sent to it any more and its hands are played automatically. */
   private def keepUntilEndOfHand(seat: Seat): Unit =
     seats = seats.updated(seat.connection.id, seat.copy(connected = false))
 
-  /** Time passes. If the table has been waiting too long for a decision it decides for who is late (no bet: the player sits out of the hand,
-   * no insurance: the hand stands), so a client that stays silent can never block the others. */
+  /** Time passes. If the table has been waiting too long for a decision it decides for who is late (no bet: the player
+   * sits out of the hand; no answer to the insurance: no insurance; no action: the table plays the hand, see
+   * [[playForAbsent]]), so a client that stays silent can never block the others. */
   override def onTick(): Unit =
     returnDeadline.filter(limit => !clock().isBefore(limit)).foreach(_ => giveUpWaiting())
     if deadline.exists(limit => !clock().isBefore(limit)) then decisionTimedOut()
@@ -177,9 +178,9 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   /** Repeats to the seat what the table is waiting for from it right now, if anything (the request was sent to the old node). */
   private def askAgain(seat: Seat): Unit = phase match
     case Phase.Betting if !hasBet(seat.player) => requestBet(seat)
-    case Phase.Insurance(awaiting, _) if awaiting.contains(seat.player.name) => seat.send(InsuranceOffer)
+    case Phase.Insurance(awaiting, _) if awaiting.contains(seat.player.name) => ask(seat, InsuranceOffer)
     case Phase.Turn(hand) if belongsTo(hand, seat) =>
-      seat.send(ActionRequest(hand.name, game.canDoubleDown(hand), game.canSplit(hand)))
+      ask(seat, ActionRequest(hand.name, game.canDoubleDown(hand), game.canSplit(hand)))
     case _ => ()
 
   /** The time to come back is over: the players still absent are treated as disconnected. If no cards have been dealt
@@ -204,8 +205,8 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
       notifyTimedOut(seats.values.filter(seat => awaiting.contains(seat.player.name)), Decision.Insurance)
       recordInsuranceAnswers(Set.empty, accepted) // who has not answered declines
     case Phase.Turn(hand) =>
-      notifyTimedOut(seatOf(hand).toList, Decision.Action) // before the stand, so the client reads "time is up" first
-      stand(hand)
+      notifyTimedOut(seatOf(hand).toList, Decision.Action) // first, so the client reads "time is up" before the cards
+      playForAbsent(hand)
     case _                            => deadline = None
 
   /** The time to bet is over: the hand starts with the players who have bet, and who has not sits it out
@@ -282,7 +283,14 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     seats.values.foreach(requestBet)
 
   private def requestBet(seat: Seat): Unit =
-    seat.send(BetRequest(seat.player.balance.totalValue, Game.MinGameBet))
+    ask(seat, BetRequest(seat.player.balance.totalValue, Game.MinGameBet))
+
+  /** Sends a request together with the time left to answer it: the deadline of the phase the table is in. */
+  private def ask(seat: Seat, request: ServerMessage): Unit =
+    deadline.foreach: limit =>
+      val millisLeft = math.max(0L, limit.toEpochMilli - clock().toEpochMilli)
+      seat.send(TimeToDecide(((millisLeft + 999) / 1000).toInt))
+    seat.send(request)
 
   private def placeBet(seat: Seat, amount: Int): Unit =
     if phase != Phase.Betting then seat.send(ErrorMessage(NotBettingTime))
@@ -316,7 +324,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     val offered = seats.values.filter(seat => hasBet(seat.player))
     enter(Phase.Insurance(awaiting = offered.map(_.player.name).toSet, accepted = List.empty))
     broadcastTable() // the clients must see their cards and the dealer's ace before they are asked
-    offered.foreach(_.send(InsuranceOffer))
+    offered.foreach(ask(_, InsuranceOffer))
 
   private def answerInsurance(seat: Seat, accept: Boolean): Unit = phase match
     case Phase.Insurance(awaiting, accepted) if awaiting.contains(seat.player.name) =>
@@ -348,11 +356,11 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   private def startTurn(player: Player): Unit =
     enter(Phase.Turn(player))
     seatOf(player) match
-      case Some(seat) if !seat.connected => stand(player) // the client is gone: nobody to ask, the hand stands
+      case Some(seat) if !seat.connected => playForAbsent(player) // the client is gone: nobody to ask
       case seat =>
         broadcastTable()
         // the rules of the local game decide which actions are offered to the hand
-        seat.foreach(_.send(ActionRequest(player.name, game.canDoubleDown(player), game.canSplit(player))))
+        seat.foreach(ask(_, ActionRequest(player.name, game.canDoubleDown(player), game.canSplit(player))))
 
   /** Only the player whose turn it is may act, on the hand being played; every other action is refused. */
   private def play(seat: Seat, action: ClientMessage): Unit = phase match
@@ -393,6 +401,19 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   private def stand(hand: Player): Unit =
     hand.stand()
     endTurn(hand)
+
+  /** The player does not answer (time is up, or the client is gone) but has a bet on the hand: the table plays it as
+   * live casinos do, with the safe rule: one more card while the hand is worth less than 12 (no card can bust it),
+   * then it stands. */
+  private def playForAbsent(hand: Player): Unit =
+    if hand.score.playableValue >= AutoStandFrom then stand(hand)
+    else game.drawCard(hand) match
+      case None                                                 => stand(hand) // no card left to draw
+      case Some(_) if game.evaluatePlayerBust(hand)             => endTurn(hand)
+      case Some(_) if hand.score.playableValue == WinningScore => stand(hand)
+      case Some(_) =>
+        broadcastTable() // everybody sees the card drawn for the absent player
+        playForAbsent(hand)
 
   /** The hand is done: its money goes on to the next hand of the same player, if any (so that every hand can
    * afford to double down), then the turn passes to the next hand that has to play. */
@@ -521,6 +542,9 @@ object TableHandler:
   val ActionNotAllowed = "This action is not allowed now"
   val NoInsuranceOffered = "No insurance is offered to you now"
   val NotEnoughMoney     = s"You need at least ${Game.MinGameBet} to sit down"
+
+  /** A hand played by the table for a player who does not answer gets cards until it is worth at least this much. */
+  val AutoStandFrom = 12
 
   /** How long the table waits for a decision before deciding for the player. */
   val DefaultDecisionTimeout: FiniteDuration = 30.seconds

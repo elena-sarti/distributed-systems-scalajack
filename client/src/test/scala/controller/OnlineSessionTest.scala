@@ -20,13 +20,13 @@ class OnlineSessionTest extends AnyFunSuite:
   private final class ScriptedConsole(lines: String*) extends Console[IO]:
     private val input = Iterator(lines*)
     val output        = ListBuffer[String]()
-    override def readLine: IO[String]                            = IO(if input.hasNext then input.next() else throw IllegalStateException("no more input"))
+    override def readLine: IO[String]                            = IO(synchronized(if input.hasNext then input.next() else throw IllegalStateException("no more input")))
     def readLineWithCharset(charset: Charset): IO[String] = readLine
-    def print[A](a: A)(using S: Show[A]): IO[Unit]        = IO(output += S.show(a))
-    def println[A](a: A)(using S: Show[A]): IO[Unit]      = IO(output += S.show(a))
+    def print[A](a: A)(using S: Show[A]): IO[Unit]        = IO(synchronized(output += S.show(a)))
+    def println[A](a: A)(using S: Show[A]): IO[Unit]      = IO(synchronized(output += S.show(a)))
     def error[A](a: A)(using S: Show[A]): IO[Unit]        = IO.unit
     def errorln[A](a: A)(using S: Show[A]): IO[Unit]      = IO.unit
-    def shown: String = output.mkString("\n")
+    def shown: String = synchronized(output.mkString("\n"))
 
   private val Nine: utils.ModelExports.StandardCard = utils.ModelExports.StandardCard(utils.ModelExports.Suit.Hearts, utils.ModelExports.Value.Nine)
   private val Session = LoggedIn("alice", "a.b.c", 100.0)
@@ -129,3 +129,87 @@ class OnlineSessionTest extends AnyFunSuite:
     console.shown should include("looking for your table")
     console.shown should include("You are back at your seat")
     console.shown should include("The game is over!")
+
+  /** A keyboard where the player types when the test says so. */
+  private final class SlowConsole(lines: Queue[IO, String]) extends Console[IO]:
+    val output = ListBuffer[String]()
+    override def readLine: IO[String]                     = lines.take
+    def readLineWithCharset(charset: Charset): IO[String] = readLine
+    def print[A](a: A)(using S: Show[A]): IO[Unit]        = IO(synchronized(output += S.show(a)))
+    def println[A](a: A)(using S: Show[A]): IO[Unit]      = IO(synchronized(output += S.show(a)))
+    def error[A](a: A)(using S: Show[A]): IO[Unit]        = IO.unit
+    def errorln[A](a: A)(using S: Show[A]): IO[Unit]      = IO.unit
+    def shown: String = synchronized(output.mkString("\n"))
+
+  /** A table driven by the test: it records what the client sends, and sends what the test pushes. */
+  private final class PushedTable(events: Queue[IO, ConnectionEvent]):
+    val received = ListBuffer[ClientMessage]()
+    val connect: TableReconnection.Connect = (_, _) =>
+      Resource.pure(new ServerConnection:
+        def send(message: ClientMessage): IO[Unit] = IO(synchronized(received += message))
+        def receive: IO[ConnectionEvent] = events.take)
+    def push(message: ServerMessage): IO[Unit] = events.offer(ConnectionEvent.Received(message))
+    def sent: List[ClientMessage] = synchronized(received.toList)
+
+  private def eventually(condition: => Boolean): IO[Unit] =
+    IO(condition).flatMap(done => if done then IO.unit else IO.sleep(10.millis) >> eventually(condition)).timeout(5.seconds)
+
+  test("when time is up the question is withdrawn, and an answer typed too late is never sent"):
+    val scenario =
+      for
+        keys    <- Queue.unbounded[IO, String]
+        fromTable <- Queue.unbounded[IO, ConnectionEvent]
+        console  = SlowConsole(keys)
+        table    = PushedTable(fromTable)
+        discard  = keys.tryTakeN(None).void
+        player  <- { given Console[IO] = console; OnlineSession(FakeLobby(), table.connect, discardTypedAhead = discard).play(Session, Table1).start }
+        _       <- eventually(table.sent == List(JoinTable("alice")))
+        _       <- table.push(BetRequest(100, 5))
+        _       <- eventually(console.shown.contains("Type your bet"))
+        _       <- table.push(DecisionTimedOut(protocol.Decision.Bet)) // the player is still thinking
+        _       <- eventually(console.shown.contains("Time is up"))
+        _       <- keys.offer("10")                                    // too late: nobody asks for it any more, and it is
+                                                                       // forgotten when the next question appears
+        _       <- IO.sleep(200.millis)
+        _       <- IO(table.sent shouldBe List(JoinTable("alice")))
+        _       <- table.push(BetRequest(100, 5))                     // the next hand: now the bet counts
+        _       <- eventually(console.shown.split("Type your bet").length == 3)
+        _       <- keys.offer("15")
+        _       <- eventually(table.sent == List(JoinTable("alice"), PlaceBet(15)))
+        _       <- table.push(ServerMessage.GameOver(List("alice" -> 100.0)))
+        outcome <- player.joinWithNever
+      yield outcome
+    scenario.timeout(10.seconds).unsafeRunSync() shouldBe TableOutcome.GameOver
+
+  test("what happens at the table is shown while the player is still deciding, with the question repeated"):
+    val scenario =
+      for
+        keys      <- Queue.unbounded[IO, String]
+        fromTable <- Queue.unbounded[IO, ConnectionEvent]
+        console    = SlowConsole(keys)
+        table      = PushedTable(fromTable)
+        player    <- { given Console[IO] = console; OnlineSession(FakeLobby(), table.connect).play(Session, Table1).start }
+        _         <- table.push(BetRequest(100, 5))
+        _         <- eventually(console.shown.contains("Type your bet"))
+        _         <- table.push(TableUpdate(view(0)))                  // somebody else bets: the player sees it at once
+        _         <- eventually(console.shown.contains("Waiting for your bet"))
+        _         <- keys.offer("L")
+        outcome   <- player.joinWithNever
+      yield (outcome, table.sent)
+    scenario.timeout(10.seconds).unsafeRunSync() shouldBe (TableOutcome.LeftTheTable, List(JoinTable("alice"), LeaveTable))
+
+  test("the time left announced by the table is shown under the question"):
+    val scenario =
+      for
+        keys      <- Queue.unbounded[IO, String]
+        fromTable <- Queue.unbounded[IO, ConnectionEvent]
+        console    = SlowConsole(keys)
+        table      = PushedTable(fromTable)
+        player    <- { given Console[IO] = console; OnlineSession(FakeLobby(), table.connect).play(Session, Table1).start }
+        _         <- table.push(TimeToDecide(30)) >> table.push(BetRequest(100, 5))
+        _         <- eventually(console.shown.contains("Type your bet"))
+        shown      = console.shown
+        _         <- keys.offer("L")
+        _         <- player.joinWithNever
+      yield shown
+    scenario.timeout(10.seconds).unsafeRunSync() should include regex "Type your bet.*\\n(Time left: (30|29) s)"

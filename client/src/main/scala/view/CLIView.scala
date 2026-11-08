@@ -186,14 +186,16 @@ object CLIView:
    * @param name          The name of the hand (the player's, or a hand split from it).
    * @param canDoubleDown Whether doubling down is allowed now.
    * @param canSplit      Whether splitting is allowed now.
+   * @param footer        Text shown under the question (the online game shows there the time left to answer).
    * @param console       The contextual [[cats.effect.std.Console]] capability required to perform I/O operations.
    * @return              An [[cats.effect.IO]] containing the validated [[PlayerAction]] chosen by the player.
    */
-  def chooseAction(name: String, canDoubleDown: Boolean, canSplit: Boolean)(using console: Console[IO]): IO[PlayerAction] =
+  def chooseAction(name: String, canDoubleDown: Boolean, canSplit: Boolean, footer: String = "")
+                  (using console: Console[IO]): IO[PlayerAction] =
     val doubleDownOption = if canDoubleDown then ", \"O\" to double down" else ""
     val splitOption = if canSplit then ", \"P\" to split" else ""
     promptUntilValid(
-      prompt =  s"$name, choose your action: type \"D\" to draw a card, \"S\" to stand$doubleDownOption$splitOption.",
+      prompt =  s"$name, choose your action: type \"D\" to draw a card, \"S\" to stand$doubleDownOption$splitOption.$footer",
       parser = input =>
         input.trim.toUpperCase match
           case "D"                  => Some(PlayerAction.DrawCard)

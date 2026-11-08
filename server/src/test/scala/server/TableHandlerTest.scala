@@ -703,10 +703,11 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     bob.inbox.exists(_.isInstanceOf[ActionRequest]) shouldBe false
     handResults(alice) shouldBe List(("Alice", DefaultBalance - 10 + 20), ("Bob", DefaultBalance - 10 + 20))
 
-  test("a player who disconnects after a split has all the hands standing"):
-    // Alice 8+8, Bob 9+7, dealer 9+7; Alice splits (a three and a two) and disconnects; the dealer draws a ten and busts
+  test("the table plays all the hands of a player who disconnects after a split"):
+    // Alice 8+8, Bob 9+7, dealer 9+7; Alice splits (a three and a two) and disconnects: her hands are worth 11 and 10,
+    // so each gets one more card (a nine and a seven) and stands; the dealer draws a ten and busts
     val (dealt, alice, bob) = aliceAndBobWith(Value.Eight, Value.Nine, Value.Nine, Value.Eight, Value.Seven,
-      Value.Seven, Value.Three, Value.Two, Value.Ten)
+      Value.Seven, Value.Three, Value.Two, Value.Nine, Value.Seven, Value.Ten)
     dealt.onMessage(alice, Split)
     dealt.onDisconnected(alice)
     bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
@@ -942,3 +943,50 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     dealt.onStop()
     cashier.returned.toList shouldBe List("Alice" -> (DefaultBalance + 10))
 
+
+  // ---- the time left is sent with every request, and the table plays the hand of who does not answer ----
+
+  test("every request comes with the time left to answer it"):
+    val dealt = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
+    val alice = join("Alice", dealt)
+    alice.inbox.takeRight(2).toList shouldBe List(TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt), BetRequest(DefaultBalance, Game.MinGameBet))
+    dealt.onMessage(alice, PlaceBet(10))
+    alice.inbox.takeRight(2).toList shouldBe
+      List(TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt), ActionRequest("Alice", canDoubleDown = true, canSplit = false))
+
+  test("a player who sits down while the others are betting is told the time that is left, not a new one"):
+    val dealt = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
+    join("Alice", dealt)
+    passTime(dealt, 10)
+    join("Bob", dealt).inbox.takeRight(2).head shouldBe TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt - 10)
+
+  /** The values of the cards of a player, as the table shows them. */
+  private def cardsOf(name: String, seenBy: FakeConnection): List[Value] =
+    lastTable(seenBy).players.find(_.name == name).get.cards.map(_.value)
+
+  test("when time is up a hand worth less than 12 gets cards until it is worth 12 or more, then stands"):
+    // deal order: Alice, Bob, dealer, Alice, Bob, dealer face down. Alice 5+4 = 9, then 2 (11) and 5 (16)
+    val (dealt, alice, bob) = aliceAndBobWith(Value.Five, Value.Ten, Value.Nine, Value.Four, Value.Eight, Value.Seven,
+      Value.Two, Value.Five)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    cardsOf("Alice", bob) shouldBe List(Value.Five, Value.Four, Value.Two, Value.Five)
+    lastTable(bob).players.map(_.state) shouldBe List(PlayerState.Standing, PlayerState.Active)
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)
+
+  test("when time is up a hand worth 12 or more stands without new cards"):
+    val (dealt, _, bob) = aliceAndBobWith(Value.Ten, Value.Ten, Value.Nine, Value.Two, Value.Eight, Value.Seven, Value.Five)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    cardsOf("Alice", bob) shouldBe List(Value.Ten, Value.Two)
+    lastTable(bob).players.head.state shouldBe PlayerState.Standing
+
+  test("the best value of the hand counts: an ace and a five are worth 16, and the hand stands"):
+    val (dealt, _, bob) = aliceAndBobWith(Value.Ace, Value.Ten, Value.Nine, Value.Five, Value.Eight, Value.Seven, Value.Five)
+    passTime(dealt, DefaultDecisionTimeout.toSeconds + 1)
+    cardsOf("Alice", bob) shouldBe List(Value.Ace, Value.Five)
+
+  test("the hand of a player who disconnects on their turn is played by the same rule"):
+    val (dealt, alice, bob) = aliceAndBobWith(Value.Five, Value.Ten, Value.Nine, Value.Four, Value.Eight, Value.Seven,
+      Value.Three)
+    dealt.onDisconnected(alice)
+    cardsOf("Alice", bob) shouldBe List(Value.Five, Value.Four, Value.Three) // 9, then 12: it stands
+    bob.inbox.last shouldBe ActionRequest("Bob", canDoubleDown = true, canSplit = false)

@@ -35,7 +35,7 @@ class OnlineViewTest extends AnyFunSuite:
 
   test("the insurance and the new game are yes or no questions"):
     given ScriptedConsole = ScriptedConsole("maybe", "y", "N")
-    askInsurance.unsafeRunSync() shouldBe true
+    askInsurance().unsafeRunSync() shouldBe true
     askToPlayAgain.unsafeRunSync() shouldBe false
 
   test("the table shows the dealer with the hidden card, the players with their cards, and whose turn it is"):

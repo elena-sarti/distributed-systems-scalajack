@@ -21,6 +21,7 @@ class ServerMessageTest extends AnyFunSuite:
   private val samples: List[ServerMessage] = List(
     JoinAccepted("Alice", 100.0),
     JoinRejected("The table is full"),
+    TimeToDecide(30),
     BetRequest(100.0, 5),
     InsuranceOffer,
     ActionRequest("Alice_split1", canDoubleDown = true, canSplit = false),

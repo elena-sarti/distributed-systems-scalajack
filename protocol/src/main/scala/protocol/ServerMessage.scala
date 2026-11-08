@@ -8,7 +8,8 @@ enum Decision derives ReadWriter:
   case Bet
    /** The answer to the insurance offer: a player who is late declines it. */
   case Insurance
-  /** The action of a hand (hit, stand, ...): a hand whose player is late stands. */
+  /** The action of a hand (hit, stand, ...): the table plays the hand of a late player (a card while it is worth less
+   * than 12, then it stands). */
   case Action
 
 /** Messages that a table node sends to its clients.
@@ -31,6 +32,14 @@ enum ServerMessage derives ReadWriter:
    * @param reason a human readable explanation.
    */
   case JoinRejected(reason: String)
+
+  /** How long the player has to answer the request that follows (a bet, the insurance, an action): when the time is
+   * over the table decides for them. A number of seconds from now, not a time of day, so that the client can count
+   * down with its own clock: the clocks of the client and of the table node never have to agree.
+   *
+   * @param seconds the seconds left, rounded up.
+   */
+  case TimeToDecide(seconds: Int)
 
   /** Asks the player to place a bet for the next hand; the client answers with a `PlaceBet`.
    *
