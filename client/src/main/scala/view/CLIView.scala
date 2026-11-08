@@ -178,17 +178,29 @@ object CLIView:
    */
   def getPlayerAction(player: Player, canDoubleDown: Player => Boolean, canSplit: Player => Boolean)
                      (using console: Console[IO]): IO[PlayerAction] =
-    val doubleDownOption = if canDoubleDown(player) then ", \"O\" to double down" else ""
-    val splitOption = if canSplit(player) then ", \"P\" to split" else ""
+    chooseAction(player.name, canDoubleDown(player), canSplit(player))
+
+  /** Prompts the hand `name` to choose an action, offering double down and split only when they are allowed: the
+   * same choice for a player of the local game and for a hand played at a table on the network.
+   *
+   * @param name          The name of the hand (the player's, or a hand split from it).
+   * @param canDoubleDown Whether doubling down is allowed now.
+   * @param canSplit      Whether splitting is allowed now.
+   * @param console       The contextual [[cats.effect.std.Console]] capability required to perform I/O operations.
+   * @return              An [[cats.effect.IO]] containing the validated [[PlayerAction]] chosen by the player.
+   */
+  def chooseAction(name: String, canDoubleDown: Boolean, canSplit: Boolean)(using console: Console[IO]): IO[PlayerAction] =
+    val doubleDownOption = if canDoubleDown then ", \"O\" to double down" else ""
+    val splitOption = if canSplit then ", \"P\" to split" else ""
     promptUntilValid(
-      prompt =  s"${player.name}, choose your action: type \"D\" to draw a card, \"S\" to stand$doubleDownOption$splitOption.",
+      prompt =  s"$name, choose your action: type \"D\" to draw a card, \"S\" to stand$doubleDownOption$splitOption.",
       parser = input =>
         input.trim.toUpperCase match
-          case "D"                          => Some(PlayerAction.DrawCard)
-          case "S"                          => Some(PlayerAction.Stand)
-          case "O" if canDoubleDown(player) => Some(PlayerAction.DoubleDown)
-          case "P" if canSplit(player)      => Some(PlayerAction.Split)
-          case _                            => None,
+          case "D"                  => Some(PlayerAction.DrawCard)
+          case "S"                  => Some(PlayerAction.Stand)
+          case "O" if canDoubleDown => Some(PlayerAction.DoubleDown)
+          case "P" if canSplit      => Some(PlayerAction.Split)
+          case _                    => None,
       predicate = input => Set(
         PlayerAction.DrawCard,
         PlayerAction.Stand,
@@ -247,7 +259,7 @@ object CLIView:
    * @param console          The contextual console capability required to perform I/O operations.
    * @return                 An [[cats.effect.IO]] wrapping the successfully parsed and validated value of type T.
    */
-  private def promptUntilValid[T](
+  private[view] def promptUntilValid[T](
                                    prompt: String,
                                    parser: String => Option[T],
                                    predicate: T => Boolean,
