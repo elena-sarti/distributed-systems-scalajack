@@ -52,6 +52,15 @@ class OnlineViewTest extends AnyFunSuite:
     text should include("│9  ♣ │  │ ??? │") // the hidden card of the dealer is shown as covered
     text should include("SCORE: 21")
 
+  test("both values of a hand with an ace are shown while it is played, only the best one once it is played"):
+    val seven: StandardCard = StandardCard(Suit.Diamonds, Value.Seven)
+    def scoreOf(state: PlayerState) =
+      describeTable(TableView(List(PlayerView("Alice", List(ace, nine), state, 90, Some(10))),
+        DealerView(List(ace, seven), hiddenCards = 0), None, 1), me = "Alice")
+    scoreOf(PlayerState.Active) should include("SCORE: 10 / 20   STATE: Active")
+    scoreOf(PlayerState.Standing) should include("SCORE: 20   STATE: Standing")
+    scoreOf(PlayerState.Standing) should include("[Dealer]\n┌─────┐  ┌─────┐\n│A  ♥ │  │7  ♦ │\n└─────┘  └─────┘\nSCORE: 18")
+
   test("the results and the end of the game are shown as in the local game"):
     given console: ScriptedConsole = ScriptedConsole()
     (renderResults(List("Alice" -> 110.0)) >> renderGameOver(List("Alice" -> 110.0))).unsafeRunSync()

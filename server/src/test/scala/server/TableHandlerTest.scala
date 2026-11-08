@@ -961,11 +961,25 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     alice.inbox.takeRight(2).toList shouldBe
       List(TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt), ActionRequest("Alice", canDoubleDown = true, canSplit = false))
 
-  test("a player who sits down while the others are betting is told the time that is left, not a new one"):
+  test("when a player sits down while the others are betting, the time to bet starts again for everybody"):
     val dealt = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
-    join("Alice", dealt)
-    passTime(dealt, 10)
-    join("Bob", dealt).inbox.takeRight(2).head shouldBe TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt - 10)
+    val alice = join("Alice", dealt)
+    passTime(dealt, 20)
+    val bob = join("Bob", dealt)
+    val fullTime = TimeToDecide(DefaultDecisionTimeout.toSeconds.toInt)
+    bob.inbox.takeRight(2).head shouldBe fullTime
+    alice.inbox.takeRight(2).toList shouldBe List(fullTime, BetRequest(DefaultBalance, Game.MinGameBet))
+    passTime(dealt, 20) // 40 seconds after Alice sat down, but only 20 after Bob: nobody is late yet
+    alice.inbox.exists(_.isInstanceOf[DecisionTimedOut]) shouldBe false
+
+  test("a player who has already bet is not asked again when somebody sits down"):
+    val dealt = tableWithDeck(card(Value.Ten), card(Value.Nine), card(Value.Six), card(Value.Seven))
+    val alice = join("Alice", dealt)
+    join("Bob", dealt)
+    dealt.onMessage(alice, PlaceBet(10))
+    val asked = alice.inbox.count(_.isInstanceOf[BetRequest])
+    join("Carol", dealt)
+    alice.inbox.count(_.isInstanceOf[BetRequest]) shouldBe asked
 
   /** The values of the cards of a player, as the table shows them. */
   private def cardsOf(name: String, seenBy: FakeConnection): List[Value] =

@@ -248,6 +248,6 @@ blackjack of online casinos. What the table decides for a late player:
 
 Every request is preceded by `TimeToDecide(seconds)`, the time left before the table decides. It is a number of seconds
 and not a time of day, so that the client counts down with its own clock: the clocks of the client and of the table
-node never have to agree. A player who sits down while the others are betting gets the time that is left, not a new
-one. The client shows the countdown under the question and withdraws the question when the time is over: an answer
+node never have to agree. When a player sits down while the others are betting, the time to bet starts again for
+everybody, so that the newcomer has all of it too (the players who have not bet yet are asked again with the new time). The client shows the countdown under the question and withdraws the question when the time is over: an answer
 typed too late is never sent.

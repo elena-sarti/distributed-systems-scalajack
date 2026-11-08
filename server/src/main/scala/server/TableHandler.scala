@@ -243,7 +243,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
         broadcastTable()
         phase match
           case Phase.Idle    => startHand()
-          case Phase.Betting => requestBet(seat)
+          case Phase.Betting => restartBetting()
           case Phase.Insurance(_, _) | Phase.Turn(_) | Phase.DealerTurn => () // a hand is being played: the new player waits for the next one
 
   /** Why a player with this name cannot sit down, if there is a reason. */
@@ -282,6 +282,12 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   private def startHand(): Unit =
     enter(Phase.Betting)
     seats.values.foreach(requestBet)
+
+  /** A new player sits down while the others are betting: the time to bet starts again, so that the newcomer has all
+   * of it too, and whoever has not bet yet is asked again with the new time. */
+  private def restartBetting(): Unit =
+    enter(Phase.Betting)
+    seats.values.filterNot(seat => hasBet(seat.player)).foreach(requestBet)
 
   private def requestBet(seat: Seat): Unit =
     ask(seat, BetRequest(seat.player.balance.totalValue, Game.MinGameBet))

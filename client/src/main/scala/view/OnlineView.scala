@@ -6,7 +6,7 @@ import protocol.{Decision, PlayerView, TableView}
  * where the two games ask the same things, plus what only the online game needs (account, leaving the table). */
 object OnlineView:
   import utils.GameUIExports.*
-  import utils.ModelExports.{StandardCard, Suit, Value, calculateScore}
+  import utils.ModelExports.{PlayerState, Score, StandardCard, Suit, Value, calculateScore}
   import CLIView.promptUntilValid
 
   enum Account:
@@ -72,18 +72,29 @@ object OnlineView:
       Option.when(canSplit)("\"P\" split")
     s"Waiting for your action: ${options.mkString(", ")}."
 
-  def askToPlayAgain(using console: Console[IO]): IO[Boolean] =yesOrNo("Do you want to sit at a table again? (Y/N)")
+  def askToPlayAgain(using console: Console[IO]): IO[Boolean] = yesOrNo("Do you want to sit at a table again? (Y/N)")
 
   /** The table as a player sees it: the dealer, then every player with cards, score, bet and balance. */
   def describeTable(table: TableView, me: String): String =
+    val dealerScore = table.dealer.visibleCards.calculateScore
+    val dealerDone  = table.dealer.hiddenCards == 0 && dealerScore.playableValue >= DealerStandsFrom
     val dealer  = s"[Dealer]\n${sideBySide(table.dealer.visibleCards ++ List.fill(table.dealer.hiddenCards)(Hidden))}" +
-      s"\nSCORE: ${table.dealer.visibleCards.calculateScore}"
+      s"\nSCORE: ${shownScore(dealerScore, finished = dealerDone)}"
     val players = table.players.map: player =>
       val who  = if player.name == me then s"${player.name} (you)" else player.name
       val turn = if table.currentTurn.contains(player.name) then "  <- turn" else ""
-      s"[$who]$turn\n${sideBySide(player.cards)}\nSCORE: ${player.cards.calculateScore}   STATE: ${player.state}   " +
+      val score = shownScore(player.cards.calculateScore, finished = player.state != PlayerState.Active)
+      s"[$who]$turn\n${sideBySide(player.cards)}\nSCORE: $score   STATE: ${player.state}   " +
         s"BET: ${player.bet.getOrElse("-")}   BALANCE: ${player.balance}"
     (s"----------------------------------------" :: dealer :: players).mkString("\n\n") + "\n"
+
+  /** The dealer stops drawing from this value on, as in the local game. */
+  private val DealerStandsFrom = 17
+
+  /** Both readings of a hand with an ace ("7 / 17") while there is still a choice to make; once the hand is played
+   * only its best value counts, as the local game does for the dealer. */
+  private def shownScore(score: Score, finished: Boolean): String =
+    if finished then score.playableValue.toString else score.toString
 
   def renderTable(table: TableView, me: String)(using console: Console[IO]): IO[Unit] =
     console.println(describeTable(table, me))
