@@ -32,7 +32,7 @@ class LoginEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
     response.statusCode() shouldBe 200
     val answer = LobbyApi.decode[LoggedIn](response.body()).toOption.get
     answer.username shouldBe "Alice"
-    answer.balance shouldBe 100.0
+    answer.balance shouldBe 0.0 // nobody starts with money
     tokens.verify(answer.token) shouldBe Some("Alice")
 
   test("a wrong password and an unknown user get the same 401"):

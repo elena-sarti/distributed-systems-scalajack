@@ -34,8 +34,12 @@ class LoginServiceTest extends AnyFunSuite with BeforeAndAfterEach:
     val session = service.login("Alice", password).get
     session.toString should not include session.token
 
-  test("a new user logs in with the initial balance"):
-    service.login("Alice", password).get.balance shouldBe 100.0
+  test("a new user logs in with no money: they have to deposit before playing"):
+    service.login("Alice", password).get.balance shouldBe 0.0
+
+  test("the money deposited is the one found at the next login"):
+    users.deposit("Alice", 40.0)
+    service.login("Alice", password).get.balance shouldBe 40.0
 
   test("the balance saved when leaving a table is the one found at the next login"):
     users.sitDown("Alice", "table-1")

@@ -10,6 +10,7 @@ class DatabaseCashierTest extends AnyFunSuite with BeforeAndAfterEach:
   override def beforeEach(): Unit =
     balances = InMemoryUserRepository()
     balances.create("Alice", "hash")
+    balances.deposit("Alice", 100.0) // a new user has nothing: the money to sit down comes from a deposit
 
   test("a player sits down with the saved balance and leaves saving the new one"):
     val cashier = DatabaseCashier(balances, "table-1")

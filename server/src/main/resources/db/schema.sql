@@ -13,8 +13,12 @@ CREATE TABLE IF NOT EXISTS users (
 -- The rule lives in the database, so it holds even if two requests arrive at the very same moment.
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users (lower(username));
 
--- The money of every user, kept between sessions. A new user starts with the initial balance.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(12, 2) NOT NULL DEFAULT 100;
+-- The money of every user, kept between sessions. A new user starts with no money and has to deposit some to play.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(12, 2) NOT NULL DEFAULT 0;
+
+-- A database created when new users started with 100 still has that default: it is changed here. Only the default
+-- changes: the balances already stored are never touched.
+ALTER TABLE users ALTER COLUMN balance SET DEFAULT 0;
 
 -- The table where the user is sitting, NULL when none. A user sits at one table at a time, so two
 -- tables never play with the same money and overwrite each other's balance.

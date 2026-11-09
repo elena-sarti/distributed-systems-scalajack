@@ -27,6 +27,7 @@ class BalanceAcrossSessionsTest extends AnyFunSuite with BeforeAndAfterEach:
     users = InMemoryUserRepository()
     login = LoginService(users, users, hasher, tokens)
     RegistrationService(users, hasher).register("Alice", "very secret password")
+    users.deposit("Alice", 100.0) // a new user has nothing: the first thing to do is a deposit
 
   /** A table whose deck gives Alice 20 against the dealer's 18. */
   private def table(id: String): TableHandler =

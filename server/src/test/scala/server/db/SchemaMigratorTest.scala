@@ -39,6 +39,17 @@ class SchemaMigratorTest extends PostgresSuite:
     PostgresBalanceRepository(database).balanceOf("Alice") shouldBe Some(BalanceRepository.InitialBalance)
     countUsers() shouldBe 1
 
+  test("a database created when new users started with 100 gets the new default, and the stored balances stay"):
+    execute("CREATE TABLE users (id BIGSERIAL PRIMARY KEY, username VARCHAR(32) NOT NULL, " +
+      "password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), " +
+      "balance NUMERIC(12, 2) NOT NULL DEFAULT 100, table_id TEXT)")
+    insertUser("Alice") // registered under the old rule: she keeps what she has
+    SchemaMigrator.migrate(database)
+    insertUser("Bob")   // registered under the new rule
+    val balances = PostgresBalanceRepository(database)
+    balances.balanceOf("Alice") shouldBe Some(100.0)
+    balances.balanceOf("Bob") shouldBe Some(0.0)
+
   test("nodes that start together and migrate at the same moment take turns, without errors"):
     val start  = java.util.concurrent.CountDownLatch(1)
     val errors = java.util.concurrent.ConcurrentLinkedQueue[Throwable]()
