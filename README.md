@@ -37,5 +37,4 @@ The project documentation is visible at [(./docs/report)](https://nicoforlivesi.
 
 ## Authors
 [Nicholas Forlivesi](https://github.com/NicoForlivesi)<br>
-[Anna Malagoli](https://github.com/AnnaM08)<br>
 [Elena Sarti](https://github.com/elena-sarti)
