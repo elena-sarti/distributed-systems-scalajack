@@ -5,6 +5,7 @@ import protocol.LobbyApi
 import server.auth.{LoginEndpoint, LoginService, Pbkdf2PasswordHasher, RegistrationEndpoint, RegistrationService, SessionTokens}
 import server.lobby.{BackupExclusionEndpoint, BackupHeartbeatEndpoint, DockerTableProvisioner, HeartbeatMonitor, PrimaryStartEndpoint, PromotionArbiter, PromotionEndpoint, TableAssignmentEndpoint, TableDispatcher, TableLocationEndpoint, TableHeartbeatEndpoint, TableRegistrationEndpoint, TableRegistry}
 import server.db.{Database, DbConfig, PostgresBalanceRepository, PostgresUserRepository, SchemaMigrator}
+import server.funds.{BalanceEndpoint, FundsEndpoint, FundsService}
 import server.liveness.{FailureDetector, LoggingFailureListener, ObservedLobbyGateway, Peer}
 import server.replication.{BackupExcluder, BackupHeartbeatSender, BackupPromoter, BackupReplica, HttpReplicator, PrimaryHeartbeatEndpoint, ReplicaEndpoint, ReplicatedTable, Replicator, TableSnapshot, TableTakeover}
 import java.nio.file.Path
@@ -212,6 +213,7 @@ object Main:
     val balances = PostgresBalanceRepository(database)
     val hasher  = Pbkdf2PasswordHasher()
     val arbiter = PromotionArbiter(registry, backups.forget) // a backup that becomes the primary is no longer watched as a backup
+    val funds   = FundsService(balances) // the money of the players in the lobby: balance, deposit, withdrawal
     Map(
       LobbyApi.RegisterPath -> RegistrationEndpoint(RegistrationService(users, hasher)),
       LobbyApi.LoginPath    -> LoginEndpoint(LoginService(users, balances, hasher, tokens)),
@@ -224,7 +226,11 @@ object Main:
       LobbyApi.ExclusionPath       -> BackupExclusionEndpoint(arbiter),
       LobbyApi.StartPath           -> PrimaryStartEndpoint(arbiter),
       LobbyApi.LocatePath -> TableLocationEndpoint(balances, registry, tokens), // where is my table now? (after a failover)
-      LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens) // only says where to play: the moves go to the table
+      LobbyApi.AssignPath         -> TableAssignmentEndpoint(dispatcher, tokens, funds), // only says where to play: the moves go to the table
+      // the lobby menu of the client: the money can be moved only while the player is not sitting at a table
+      LobbyApi.BalancePath  -> BalanceEndpoint(tokens, funds),
+      LobbyApi.DepositPath  -> FundsEndpoint("Deposit", tokens, funds.deposit),
+      LobbyApi.WithdrawPath -> FundsEndpoint("Withdrawal", tokens, funds.withdraw)
     )
 
   private def fail(message: String): Nothing =
