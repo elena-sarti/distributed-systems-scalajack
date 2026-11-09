@@ -1,26 +1,30 @@
 package server.lobby
 
-import protocol.LobbyApi
 import protocol.LobbyApi.{ApiError, AssignRequest, TableAddress, TableStarting}
-import server.auth.{JsonPostEndpoint, SessionTokens}
+import server.auth.{AuthenticatedEndpoint, SessionTokens}
+import server.funds.FundsService
+import utils.ModelExports.Game
 
 /** `POST /assign`: a logged in player asks where to play. The lobby only says where: from then on the
  * client talks to the table node directly, and no move of the game passes through the lobby.
  *
  * The token is checked here so that nobody can take seats without having logged in; the table checks it
  * again at the WebSocket handshake. The token is never written in the log.
+ *
+ * A player who cannot afford the minimum bet is refused (403) before any seat is taken: they have to deposit first.
  */
-final class TableAssignmentEndpoint(dispatcher: TableDispatcher, tokens: SessionTokens)
-  extends JsonPostEndpoint("Table assignment"):
+final class TableAssignmentEndpoint(dispatcher: TableDispatcher, tokens: SessionTokens, funds: FundsService)
+  extends AuthenticatedEndpoint[AssignRequest]("Table assignment", tokens):
   import TableAssignmentEndpoint.*
 
-  protected def answer(body: String): (Int, String) =
-    LobbyApi.decode[AssignRequest](body) match
-      case Left(message)  => (400, json(ApiError(message)))
-      case Right(request) =>
-        tokens.verify(request.token) match
-          case None           => (401, json(ApiError(InvalidToken)))
-          case Some(username) => reply(username, dispatcher.assign())
+  protected def tokenOf(request: AssignRequest): String = request.token
+
+  protected def answerFor(username: String, request: AssignRequest): (Int, String) =
+    // the check comes first: a refused player must not take a seat, nor make the lobby start a new table
+    if funds.canPlay(username) then reply(username, dispatcher.assign())
+    else
+      System.out.println(s"No seat for $username: the balance is below the minimum bet")
+      (403, json(ApiError(NotEnoughMoney)))
 
   private def reply(username: String, assignment: Assignment): (Int, String) = assignment match
     case Assignment.Assigned(table) =>
@@ -37,6 +41,7 @@ final class TableAssignmentEndpoint(dispatcher: TableDispatcher, tokens: Session
       (503, json(ApiError(CannotStart)))
 
 object TableAssignmentEndpoint:
-  val InvalidToken = "Invalid or expired session token"
+  val InvalidToken = AuthenticatedEndpoint.InvalidToken
   val ServerFull   = "The server is full, try again later"
   val CannotStart  = "A new table could not be started, try again later"
+  val NotEnoughMoney = s"You need at least ${Game.MinGameBet} fiches to sit at a table: make a deposit first"

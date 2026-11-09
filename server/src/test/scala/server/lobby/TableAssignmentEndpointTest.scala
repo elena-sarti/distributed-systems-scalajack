@@ -2,9 +2,10 @@ package server.lobby
 
 import protocol.LobbyApi
 import protocol.LobbyApi.{AssignRequest, TableAddress, TableStarting}
-import server.auth.SessionTokens
+import server.auth.{InMemoryUserRepository, SessionTokens}
 import server.auth.TestLobby
 import server.auth.TestLobby.{capturedOutput, reason}
+import server.funds.FundsService
 import utils.TestExports.*
 import java.time.Instant
 import scala.collection.mutable.ListBuffer
@@ -25,15 +26,20 @@ class TableAssignmentEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
   private var registry: TableRegistry     = _
   private var provisioner: FakeProvisioner = _
   private var tokens: SessionTokens       = _
+  private var users: InMemoryUserRepository = _
   private var lobby: TestLobby            = _
 
   override def beforeEach(): Unit =
     now = t0
+    users = InMemoryUserRepository()
+    users.create("Alice", "hash")
+    users.deposit("Alice", 100.0) // the money to play: a new user has none
+    users.create("Bob", "hash")   // and Bob has none
     registry = TableRegistry(capacity = 1) // one seat per table: easy to fill
     provisioner = FakeProvisioner()
     tokens = SessionTokens("a test secret that is long enough for HMAC".getBytes("UTF-8"), clock = () => now)
     val dispatcher = TableDispatcher(registry, provisioner, Seq("table-1", "table-2"), clock = () => now)
-    lobby = TestLobby(Map(LobbyApi.AssignPath -> TableAssignmentEndpoint(dispatcher, tokens)))
+    lobby = TestLobby(Map(LobbyApi.AssignPath -> TableAssignmentEndpoint(dispatcher, tokens, FundsService(users))))
 
   override def afterEach(): Unit = lobby.stop()
 
@@ -45,6 +51,23 @@ class TableAssignmentEndpointTest extends AnyFunSuite with BeforeAndAfterEach:
     val response = assign()
     response.statusCode() shouldBe 200
     LobbyApi.decode[TableAddress](response.body()) shouldBe Right(TableAddress("table-1", "localhost", 9091))
+
+  test("a player with less than the minimum bet gets 403 and no seat is taken, nor a table started"):
+    registry.register("table-1", "localhost", 9091, now)
+    registry.updateFreeSeats("table-1", 0) // if the check came after the dispatcher, a node would be started
+    val response = assign(tokens.issue("Bob")) // no money at all
+    response.statusCode() shouldBe 403
+    reason(response) shouldBe TableAssignmentEndpoint.NotEnoughMoney
+    provisioner.started shouldBe empty
+    users.deposit("Bob", 4.5)
+    assign(tokens.issue("Bob")).statusCode() shouldBe 403 // still below the minimum bet (5)
+
+  test("a player who has deposited the minimum bet gets a seat, and one who withdraws it again does not"):
+    registry.register("table-1", "localhost", 9091, now)
+    users.deposit("Bob", 5.0)
+    assign(tokens.issue("Bob")).statusCode() shouldBe 200
+    users.withdraw("Bob", 5.0)
+    assign(tokens.issue("Bob")).statusCode() shouldBe 403
 
   test("the answer is only the address: the lobby has nothing to do with the moves of the game"):
     registry.register("table-1", "localhost", 9091, now)

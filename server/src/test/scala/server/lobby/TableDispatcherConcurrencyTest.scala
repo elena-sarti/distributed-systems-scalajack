@@ -2,8 +2,9 @@ package server.lobby
 
 import protocol.LobbyApi
 import protocol.LobbyApi.AssignRequest
-import server.auth.{SessionTokens, TestLobby}
+import server.auth.{InMemoryUserRepository, SessionTokens, TestLobby}
 import server.auth.TestLobby.capturedOutput
+import server.funds.FundsService
 import utils.TestExports.*
 import java.time.Instant
 import java.util.concurrent.{Callable, ConcurrentLinkedQueue, CyclicBarrier, Executors, TimeUnit}
@@ -104,7 +105,11 @@ class TableDispatcherConcurrencyTest extends AnyFunSuite:
     val registry   = TableRegistry(capacity = 1)
     val tokens     = SessionTokens("a test secret that is long enough for HMAC".getBytes("UTF-8"))
     val dispatcher = TableDispatcher(registry, NeverStarts, pool = Seq("table-1"))
-    val lobby      = TestLobby(Map(LobbyApi.AssignPath -> TableAssignmentEndpoint(dispatcher, tokens)))
+    val users      = InMemoryUserRepository()
+    (0 to 1).foreach: client => // both players have the money to play: it is the seat that is missing, not the money
+      users.create(s"Player$client", "hash")
+      users.deposit(s"Player$client", 100.0)
+    val lobby      = TestLobby(Map(LobbyApi.AssignPath -> TableAssignmentEndpoint(dispatcher, tokens, FundsService(users))))
     try
       // the endpoint logs every assignment: the output is captured only to keep the test report readable
       capturedOutput:
