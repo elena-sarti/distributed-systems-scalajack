@@ -17,6 +17,9 @@ class TableReconnectionTest extends AnyFunSuite:
     def register(username: String, password: String) = IO.pure(Left("not used here"))
     def login(username: String, password: String)    = IO.pure(Left("not used here"))
     def assign(token: String)                        = IO.pure(SeatAnswer.Refused("not used here"))
+    def balance(token: String)                       = IO.pure(Left("not used here"))
+    def deposit(token: String, amount: Double)       = IO.pure(Left("not used here"))
+    def withdraw(token: String, amount: Double)      = IO.pure(Left("not used here"))
     def locate(token: String): IO[LocateAnswer] =
       tokens.update(_ :+ token) *> answers.modify:
         case only :: Nil  => (List(only), only)

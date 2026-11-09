@@ -2,7 +2,7 @@ package network
 
 import cats.effect.IO
 import protocol.LobbyApi
-import protocol.LobbyApi.{ApiError, AssignRequest, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress, TableStarting}
+import protocol.LobbyApi.{AmountRequest, ApiError, AssignRequest, BalanceRequest, Funds, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress, TableStarting}
 import upickle.default.ReadWriter
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -44,6 +44,15 @@ trait LobbyConnection:
   /** Where the table of the player with this session token is now. */
   def locate(token: String): IO[LocateAnswer]
 
+  /** The money of the player, or why it cannot be told. Only the lobby knows it while the player is not at a table. */
+  def balance(token: String): IO[Either[String, Double]]
+
+  /** Adds `amount` fiches to the balance of the player: the new balance, or why the lobby refused. */
+  def deposit(token: String, amount: Double): IO[Either[String, Double]]
+
+  /** Takes `amount` fiches from the balance of the player: the new balance, or why the lobby refused. */
+  def withdraw(token: String, amount: Double): IO[Either[String, Double]]
+
 /** The lobby reached over its HTTP API, with the JDK's client.
  *
  * @param baseUrl the address of the lobby, e.g. `http://localhost:9080`. */
@@ -78,6 +87,19 @@ final class HttpLobbyConnection(baseUrl: String) extends LobbyConnection:
       case Some((503, _))      => LocateAnswer.NotReachableYet
       case Some((status, _))   => LocateAnswer.Refused(status)
       case None                => LocateAnswer.Unreachable
+
+  def balance(token: String): IO[Either[String, Double]] = funds(LobbyApi.BalancePath, BalanceRequest(token))
+
+  def deposit(token: String, amount: Double): IO[Either[String, Double]] = funds(LobbyApi.DepositPath, AmountRequest(token, amount))
+
+  def withdraw(token: String, amount: Double): IO[Either[String, Double]] = funds(LobbyApi.WithdrawPath, AmountRequest(token, amount))
+
+  /** The three requests on the money are answered in the same way: the balance now, or the reason of the refusal. */
+  private def funds[T: ReadWriter](path: String, body: T): IO[Either[String, Double]] =
+    post(path, body).map:
+      case Some((200, answer)) => LobbyApi.decode[Funds](answer).map(_.balance)
+      case Some((_, answer))   => Left(reasonIn(answer))
+      case None                => Left(Unreachable)
 
   /** Status and body of the answer, or `None` if the lobby did not answer. */
   private def post[T: ReadWriter](path: String, body: T): IO[Option[(Int, String)]] =

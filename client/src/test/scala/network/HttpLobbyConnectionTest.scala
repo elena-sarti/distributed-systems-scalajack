@@ -2,7 +2,7 @@ package network
 
 import com.sun.net.httpserver.HttpServer
 import protocol.LobbyApi
-import protocol.LobbyApi.{ApiError, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, Registered, TableAddress, TableStarting}
+import protocol.LobbyApi.{AmountRequest, ApiError, BalanceRequest, Funds, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, Registered, TableAddress, TableStarting}
 import utils.TestExports.*
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicReference
@@ -61,8 +61,29 @@ class HttpLobbyConnectionTest extends AnyFunSuite:
     withLobby(LobbyApi.LocatePath, 503)((lobby, _) => run(lobby.locate("a.b.c")) shouldBe LocateAnswer.NotReachableYet)
     withLobby(LobbyApi.LocatePath, 401)((lobby, _) => run(lobby.locate("a.b.c")) shouldBe LocateAnswer.Refused(401))
 
+  test("the balance is asked with the token, and a deposit or a withdrawal gives the new balance"):
+    withLobby(LobbyApi.BalancePath, 200, LobbyApi.encode(Funds(50.0))): (lobby, request) =>
+      run(lobby.balance("a.b.c")) shouldBe Right(50.0)
+      LobbyApi.decode[BalanceRequest](request.get) shouldBe Right(BalanceRequest("a.b.c"))
+    withLobby(LobbyApi.DepositPath, 200, LobbyApi.encode(Funds(150.0))): (lobby, request) =>
+      run(lobby.deposit("a.b.c", 100.0)) shouldBe Right(150.0)
+      LobbyApi.decode[AmountRequest](request.get) shouldBe Right(AmountRequest("a.b.c", 100.0))
+    withLobby(LobbyApi.WithdrawPath, 200, LobbyApi.encode(Funds(20.5))): (lobby, request) =>
+      run(lobby.withdraw("a.b.c", 30.0)) shouldBe Right(20.5)
+      LobbyApi.decode[AmountRequest](request.get) shouldBe Right(AmountRequest("a.b.c", 30.0))
+
+  test("a refusal on the money comes with the reason of the lobby"):
+    val reason = "You are sitting at a table: leave it before moving your money"
+    withLobby(LobbyApi.DepositPath, 409, LobbyApi.encode(ApiError(reason)))((lobby, _) => run(lobby.deposit("a.b.c", 10.0)) shouldBe Left(reason))
+    withLobby(LobbyApi.WithdrawPath, 409, LobbyApi.encode(ApiError(reason)))((lobby, _) => run(lobby.withdraw("a.b.c", 10.0)) shouldBe Left(reason))
+    withLobby(LobbyApi.BalancePath, 401, LobbyApi.encode(ApiError("Invalid or expired session token"))): (lobby, _) =>
+      run(lobby.balance("a.b.c")) shouldBe Left("Invalid or expired session token")
+
   test("a lobby that does not answer gives a reason for the player, without errors"):
     run(nobody.register("alice", "secret-password")) shouldBe Left(HttpLobbyConnection.Unreachable)
     run(nobody.login("alice", "secret-password")) shouldBe Left(HttpLobbyConnection.Unreachable)
     run(nobody.assign("a.b.c")) shouldBe SeatAnswer.Refused(HttpLobbyConnection.Unreachable)
     run(nobody.locate("a.b.c")) shouldBe LocateAnswer.Unreachable
+    run(nobody.balance("a.b.c")) shouldBe Left(HttpLobbyConnection.Unreachable)
+    run(nobody.deposit("a.b.c", 10.0)) shouldBe Left(HttpLobbyConnection.Unreachable)
+    run(nobody.withdraw("a.b.c", 10.0)) shouldBe Left(HttpLobbyConnection.Unreachable)

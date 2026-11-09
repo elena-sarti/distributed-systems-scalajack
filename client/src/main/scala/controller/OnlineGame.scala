@@ -9,7 +9,7 @@ import protocol.LobbyApi.{LoggedIn, TableAddress}
 import protocol.ServerMessage.*
 import utils.GameUIExports.*
 import view.{OnlineView, TerminalConsole}
-import view.OnlineView.{Account, BetChoice}
+import view.OnlineView.{Account, BetChoice, LobbyChoice}
 import java.net.URI
 import scala.concurrent.duration.*
 
@@ -31,8 +31,11 @@ object OnlineGame extends IOApp:
 enum TableOutcome:
   case LeftTheTable, GameOver, Refused, ConnectionLost
 
-/** A player of the online game: logs in, asks the lobby for a seat, plays at the table until the game there is over or
- * they leave, and then may sit down again.
+/** A player of the online game: logs in and finds themselves in the lobby, where they can deposit and withdraw money and
+ * ask for a seat; they play at the table until the game there is over or they leave, and then are back in the lobby.
+ *
+ * A new account has no money, and the lobby does not give a seat to a player below the minimum bet: the first thing to do
+ * is a deposit. The money can be moved only in the lobby: while the player is at a table it is the table that holds it.
  *
  * The table leads the game: the client shows what the table sends and answers what it asks (a bet, the insurance, an
  * action), using the same prompts as the local game. If the connection with the table is lost (e.g. its node failed)
@@ -47,16 +50,18 @@ enum TableOutcome:
  * @param discardTypedAhead forgets what the player typed before a new question appeared.
  * @param liveCountdown     whether the time left is rewritten every second (only on a real terminal).
  * @param dealerPause       the pause before showing each move of the dealer, as a real dealer takes time to turn a card.
+ * @param seatPoll          how often to ask the lobby whether the seat of a table just left has been freed.
  */
 final class OnlineSession(lobby: LobbyConnection,
                           connect: TableReconnection.Connect = (uri, token) => WebSocketConnection.connect(uri, Some(token)),
                           waitStart: FiniteDuration = 3.seconds,
                           discardTypedAhead: IO[Unit] = IO.unit,
                           liveCountdown: Boolean = false,
-                          dealerPause: FiniteDuration = 1.second)(using Console[IO]):
+                          dealerPause: FiniteDuration = 1.second,
+                          seatPoll: FiniteDuration = 100.millis)(using Console[IO]):
   import OnlineSession.*
 
-  def run: IO[Unit] = signIn.flatMap(playUntilDone)
+  def run: IO[Unit] = signIn.flatMap(inLobby)
 
   /** Logs in, after registering if the player asks for it, until the lobby accepts the credentials. */
   def signIn: IO[LoggedIn] =
@@ -72,9 +77,44 @@ final class OnlineSession(lobby: LobbyConnection,
             case Left(reason)   => OnlineView.info(reason) >> signIn
             case Right(session) => OnlineView.info(s"Hello ${session.username}, your balance is ${session.balance} fiches.\n").as(session)
 
-  private def playUntilDone(session: LoggedIn): IO[Unit] =
-    seat(session).flatMap(_.traverse_(play(session, _))) >>
-      OnlineView.askToPlayAgain.flatMap(again => IO.whenA(again)(playUntilDone(session)))
+  /** The lobby: shows the balance and asks what to do, again and again until the player quits. The balance is asked
+   * to the lobby every time, because it changes at the tables. */
+  private def inLobby(session: LoggedIn): IO[Unit] =
+    for
+      balance <- lobby.balance(session.token)
+      _       <- balance.left.toOption.traverse_(OnlineView.info(_)) // the player is told why the balance is not shown
+      choice  <- OnlineView.askLobbyChoice(balance.toOption)
+      _       <- IO.unlessA(choice == LobbyChoice.Quit)(act(session, choice) >> inLobby(session))
+    yield ()
+
+  private def act(session: LoggedIn, choice: LobbyChoice): IO[Unit] = choice match
+    case LobbyChoice.Play     => playAtTable(session)
+    case LobbyChoice.Deposit  => transfer("deposit", lobby.deposit(session.token, _))
+    case LobbyChoice.Withdraw => transfer("withdraw", lobby.withdraw(session.token, _))
+    case LobbyChoice.Quit     => IO.unit
+
+  /** Asks how much and moves that money; the answer of the lobby (the new balance, or why not) is told to the player. */
+  private def transfer(verb: String, move: Double => IO[Either[String, Double]]): IO[Unit] =
+    OnlineView.askAmount(verb).flatMap:
+      case None         => IO.unit
+      case Some(amount) => move(amount).flatMap:
+        case Right(balance) => OnlineView.info(s"Done: your balance is now $balance fiches.\n")
+        case Left(reason)   => OnlineView.info(reason + "\n")
+
+  /** Asks the lobby for a seat and plays there, if there is one; whatever way the game at the table ends, the player
+   * leaves with the money they have. */
+  private def playAtTable(session: LoggedIn): IO[Unit] =
+    seat(session).flatMap(_.traverse_(address => play(session, address) >> awaitSeatReleased(session)))
+
+  /** The table gives the money back, and frees the seat, a moment after the player has left (or the game is over):
+   * until then the lobby still sees the player sitting, and would show the balance they had before playing and refuse to
+   * move their money. So before going back to the lobby the client waits, briefly, for the seat to be freed. */
+  private def awaitSeatReleased(session: LoggedIn, attemptsLeft: Int = SeatReleaseAttempts): IO[Unit] =
+    IO.whenA(attemptsLeft > 0):
+      lobby.locate(session.token).flatMap:
+        case LocateAnswer.Found(_) | LocateAnswer.NotReachableYet => // still seated
+          IO.sleep(seatPoll) >> awaitSeatReleased(session, attemptsLeft - 1)
+        case _ => IO.unit // freed; or the lobby does not tell, and waiting more would not help
 
   /** The table the lobby assigns, waiting while a new table starts; `None` if there is no seat now. */
   private def seat(session: LoggedIn): IO[Option[TableAddress]] =
@@ -191,6 +231,9 @@ final class OnlineSession(lobby: LobbyConnection,
     case PlayerAction.Split      => Split
 
 private object OnlineSession:
+  /** How many times the client checks that the seat has been freed: with the default `seatPoll`, up to two seconds. */
+  val SeatReleaseAttempts = 20
+
   /** What the player decided: a message for the table, or to leave it. */
   enum Answer:
     case Send(message: ClientMessage)

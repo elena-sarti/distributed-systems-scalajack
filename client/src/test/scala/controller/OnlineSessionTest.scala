@@ -32,21 +32,54 @@ class OnlineSessionTest extends AnyFunSuite:
   private val Session = LoggedIn("alice", "a.b.c", 100.0)
   private val Table1  = TableAddress("table-1", "localhost", 9091)
 
-  /** A lobby with one user, alice, and the answers given for the seats and the location of the table. */
+  /** A lobby with one user, alice, who has `money` fiches: the answers given for the seats (as the real lobby does, she
+   * gets none while she is below the minimum bet), and for the location of the table.
+   *
+   * @param balanceError what the lobby says, instead of the balance, when it cannot tell it.
+   */
   private final class FakeLobby(seats: List[SeatAnswer] = List(SeatAnswer.Assigned(Table1)),
-                                where: LocateAnswer = LocateAnswer.Found(Table1)) extends LobbyConnection:
+                                where: LocateAnswer = LocateAnswer.NotSeated,
+                                var money: Double = 100.0,
+                                balanceError: Option[String] = None) extends LobbyConnection:
     private var nextSeats = seats
     val registered = ListBuffer[String]()
+    /** What the client asked for the balance and for the table, in order. */
+    val calls = ListBuffer[String]()
+    /** How many of the next requests for the table still find the player sitting: the table has not freed the seat yet. */
+    var stillSeated = 0
     def register(username: String, password: String) = IO:
       if username == "alice" && registered.isEmpty then Left("This username is already taken")
       else { registered += username; Right(()) }
     def login(username: String, password: String) = IO:
       if password == "secret-password" then Right(Session.copy(username = username)) else Left("Wrong username or password")
     def assign(token: String) = IO:
-      val answer = nextSeats.headOption.getOrElse(SeatAnswer.Refused("The server is full"))
-      nextSeats = nextSeats.drop(1)
-      answer
-    def locate(token: String) = IO.pure(where)
+      if money < FakeLobby.MinBet then SeatAnswer.Refused(FakeLobby.NeedsMoney)
+      else
+        val answer = nextSeats.headOption.getOrElse(SeatAnswer.Refused("The server is full"))
+        nextSeats = nextSeats.drop(1)
+        answer
+    def locate(token: String): IO[LocateAnswer] = IO:
+      calls += "locate"
+      if stillSeated > 0 then
+        stillSeated -= 1
+        LocateAnswer.Found(Table1)
+      else where
+    def balance(token: String): IO[Either[String, Double]] = IO:
+      calls += "balance"
+      balanceError.toLeft(money)
+    def deposit(token: String, amount: Double): IO[Either[String, Double]] = IO:
+      money += amount
+      Right(money)
+    def withdraw(token: String, amount: Double): IO[Either[String, Double]] = IO:
+      if amount > money then Left(FakeLobby.TooMuch)
+      else
+        money -= amount
+        Right(money)
+
+  private object FakeLobby:
+    val MinBet     = 5.0
+    val NeedsMoney = "You need at least 5 fiches to sit at a table: make a deposit first"
+    val TooMuch    = "Your balance is lower than the amount to withdraw"
 
   /** A table that answers each message of the client with the messages of `rule`, and records what it receives.
    * After `dropAfter` messages from the client the connection drops, as when the node fails. */
@@ -77,11 +110,11 @@ class OnlineSessionTest extends AnyFunSuite:
 
   private def play(console: ScriptedConsole, lobby: LobbyConnection, table: FakeTable): Unit =
     given Console[IO] = console
-    OnlineSession(lobby, table.connect, waitStart = 10.millis).run.timeout(10.seconds).unsafeRunSync()
+    OnlineSession(lobby, table.connect, waitStart = 10.millis, seatPoll = 1.millis).run.timeout(10.seconds).unsafeRunSync()
 
   test("a whole game played only from the client: log in, sit at the table, bet, play, see the results"):
     val table   = FakeTable(oneHand)
-    val console = ScriptedConsole("L", "alice", "secret-password", "10", "D", "S", "N")
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "10", "D", "S", "Q")
     play(console, FakeLobby(), table)
     table.received.toList shouldBe List(JoinTable("alice"), PlaceBet(10), Hit, Stand)
     table.opened.toList shouldBe List(URI.create("ws://localhost:9091"))
@@ -91,7 +124,7 @@ class OnlineSessionTest extends AnyFunSuite:
 
   test("wrong credentials are asked again; a new user registers and is logged in at once"):
     val lobby   = FakeLobby()
-    val console = ScriptedConsole("L", "bob", "wrong", "R", "bob", "secret-password", "L", "N")
+    val console = ScriptedConsole("L", "bob", "wrong", "R", "bob", "secret-password", "P", "L", "Q")
     play(console, lobby, FakeTable(oneHand))
     lobby.registered.toList shouldBe List("bob")
     console.shown should include("Your account has been created")
@@ -99,15 +132,60 @@ class OnlineSessionTest extends AnyFunSuite:
 
   test("the player can leave the table instead of betting, and then sit down again"):
     val table   = FakeTable(oneHand)
-    val console = ScriptedConsole("L", "alice", "secret-password", "L", "Y", "L", "N")
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "L", "P", "L", "Q")
     play(console, FakeLobby(List(SeatAnswer.Assigned(Table1), SeatAnswer.Assigned(Table1))), table)
     table.received.toList shouldBe List(JoinTable("alice"), LeaveTable, JoinTable("alice"), LeaveTable)
 
   test("while a new table is starting the client waits and asks again; without seats the player is told why"):
-    val console = ScriptedConsole("L", "alice", "secret-password", "L", "Y", "N")
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "L", "P", "Q")
     play(console, FakeLobby(List(SeatAnswer.Starting("table-2"), SeatAnswer.Assigned(Table1))), FakeTable(oneHand))
     console.shown should include("a new one is starting")
     console.shown should include("The server is full") // the second time there is no seat
+
+  test("a new player has no money: the lobby refuses the seat, the player deposits, and then sits down"):
+    val lobby   = FakeLobby(money = 0.0)
+    val table   = FakeTable(oneHand)
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "D", "50", "P", "L", "Q")
+    play(console, lobby, table)
+    console.shown should include(FakeLobby.NeedsMoney)                       // the first "P": no seat
+    console.shown should include("Done: your balance is now 50.0 fiches")
+    lobby.money shouldBe 50.0
+    table.opened.size shouldBe 1                                              // only the second "P" reached a table
+    table.received.toList shouldBe List(JoinTable("alice"), LeaveTable)
+
+  test("the player can withdraw money in the lobby: a withdrawal of too much is refused, and the amount can be cancelled"):
+    val lobby   = FakeLobby()
+    val table   = FakeTable(oneHand)
+    val console = ScriptedConsole("L", "alice", "secret-password", "W", "500", "W", "C", "W", "40", "Q")
+    play(console, lobby, table)
+    console.shown should include(FakeLobby.TooMuch)
+    console.shown should include("Done: your balance is now 60.0 fiches")
+    lobby.money shouldBe 60.0
+    table.opened shouldBe empty
+
+  test("an amount that is not a number is asked again"):
+    val lobby   = FakeLobby(money = 0.0)
+    val console = ScriptedConsole("L", "alice", "secret-password", "D", "lots", "-5", "25", "Q")
+    play(console, lobby, FakeTable(oneHand))
+    console.shown should include("type a positive number of fiches")
+    lobby.money shouldBe 25.0
+
+  test("the lobby shows the balance every time, and is shown again when the player has left the table"):
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "L", "Q")
+    play(console, FakeLobby(money = 70.0), FakeTable(oneHand))
+    console.shown.split("Your balance is 70.0 fiches").length shouldBe 3 // before sitting down, and after leaving
+
+  test("before going back to the lobby the client waits for the table to free the seat, so the balance is up to date"):
+    val lobby = FakeLobby()
+    lobby.stillSeated = 2 // the table has not saved the balance yet when the player leaves
+    play(ScriptedConsole("L", "alice", "secret-password", "P", "L", "Q"), lobby, FakeTable(oneHand))
+    lobby.calls.toList shouldBe List("balance", "locate", "locate", "locate", "balance")
+
+  test("if the lobby cannot tell the balance the player is told why, and the menu still works"):
+    val console = ScriptedConsole("L", "alice", "secret-password", "Q")
+    play(console, FakeLobby(balanceError = Some("The lobby cannot be reached")), FakeTable(oneHand))
+    console.shown should include("The lobby cannot be reached")
+    console.shown should include("Your balance is not available now")
 
   test("after a failover the client finds its table again and goes on with the hand"):
     // the first connection drops right after the bet; the second one is the promoted node, which gives the seat back
@@ -121,9 +199,9 @@ class OnlineSessionTest extends AnyFunSuite:
       opened += uri.toString
       if opened.size == 1 then table.connect(uri, token) else promoted.connect(uri, token)
     val lobby   = FakeLobby(where = LocateAnswer.Found(TableAddress("table-1", "localhost", 9191)))
-    val console = ScriptedConsole("L", "alice", "secret-password", "10", "S", "N")
+    val console = ScriptedConsole("L", "alice", "secret-password", "P", "10", "S", "Q")
     given Console[IO] = console
-    OnlineSession(lobby, connect).run.timeout(10.seconds).unsafeRunSync()
+    OnlineSession(lobby, connect, seatPoll = 1.millis).run.timeout(10.seconds).unsafeRunSync()
     opened.toList shouldBe List("ws://localhost:9091", "ws://localhost:9191")
     promoted.received.toList shouldBe List(JoinTable("alice"), Stand)
     console.shown should include("looking for your table")

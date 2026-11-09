@@ -18,6 +18,10 @@ object OnlineView:
     case Bet(amount: Int)
     case Leave
 
+  /** What a player can do in the lobby, where they are before sitting at a table and when they have left one. */
+  enum LobbyChoice:
+    case Play, Deposit, Withdraw, Quit
+
   def welcome(lobbyUrl: String)(using console: Console[IO]): IO[Unit] =
     console.println(s"Welcome to ScalaJack online! The lobby is at $lobbyUrl.\n")
 
@@ -35,6 +39,31 @@ object OnlineView:
       username <- promptUntilValid[String]("Username:", Some(_), _.nonEmpty, _ => "", "The username cannot be empty.")
       password <- promptUntilValid[String]("Password:", Some(_), _.nonEmpty, _ => "", "The password cannot be empty.")
     yield Credentials(account, username, password)
+
+  /** The menu of the lobby, under the balance of the player (`None` if the lobby could not tell it). */
+  def askLobbyChoice(balance: Option[Double])(using console: Console[IO]): IO[LobbyChoice] =
+    promptUntilValid(
+      prompt = s"${balance.fold("Your balance is not available now.")(money => s"Your balance is $money fiches.")}\n" +
+        "Type \"P\" to sit at a table, \"D\" to make a deposit, \"W\" to withdraw, or \"Q\" to quit.",
+      parser = _.toUpperCase match
+        case "P" => Some(LobbyChoice.Play)
+        case "D" => Some(LobbyChoice.Deposit)
+        case "W" => Some(LobbyChoice.Withdraw)
+        case "Q" => Some(LobbyChoice.Quit)
+        case _   => None,
+      predicate = _ => true,
+      successMessage = _ => "",
+      errorMessage = "Sorry, type \"P\", \"D\", \"W\" or \"Q\".")
+
+  /** The amount of fiches to deposit or to withdraw (`verb` says which), or `None` if the player changes their mind.
+   * The lobby checks the amount again: here only what cannot be an amount is refused. */
+  def askAmount(verb: String)(using console: Console[IO]): IO[Option[Double]] =
+    promptUntilValid[Option[Double]](
+      prompt = s"How many fiches do you want to $verb? (or \"C\" to cancel)",
+      parser = input => if input.equalsIgnoreCase("C") then Some(None) else input.toDoubleOption.map(Some(_)),
+      predicate = _.forall(amount => amount.isFinite && amount > 0),
+      successMessage = _ => "",
+      errorMessage = "Sorry, type a positive number of fiches, or \"C\".")
 
   /** The bet for the next hand, or the wish to leave the table. The table checks the bet again. */
   def askBet(balance: Double, minBet: Int, footer: String = "")(using console: Console[IO]): IO[BetChoice] =
@@ -71,8 +100,6 @@ object OnlineView:
     val options = List("\"D\" draw", "\"S\" stand") ++ Option.when(canDoubleDown)("\"O\" double down") ++
       Option.when(canSplit)("\"P\" split")
     s"Waiting for your action: ${options.mkString(", ")}."
-
-  def askToPlayAgain(using console: Console[IO]): IO[Boolean] = yesOrNo("Do you want to sit at a table again? (Y/N)")
 
   /** The table as a player sees it: the dealer, then every player with cards, score, bet and balance. */
   def describeTable(table: TableView, me: String): String =
