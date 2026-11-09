@@ -1,9 +1,9 @@
 package server.auth
 
-import server.db.{BalanceRepository, CreateUserError, SitDownError, User, UserRepository}
+import server.db.{BalanceRepository, CreateUserError, FundsError, SitDownError, User, UserRepository}
 
 /** The users table in memory, with the same rules as the PostgreSQL one (usernames unique ignoring the
- * case, one table at a time), so the logic that uses it can be tested without a database. */
+ * case, one table at a time, money moved only while nobody is sitting), so the logic that uses it can be tested without a database. */
 final class InMemoryUserRepository extends UserRepository, BalanceRepository:
   private final case class Row(user: User, balance: Double, tableId: Option[String])
 
@@ -39,6 +39,19 @@ final class InMemoryUserRepository extends UserRepository, BalanceRepository:
         rows = rows.updated(username.toLowerCase, row.copy(balance = balance, tableId = None))
         true
       case _ => false
+
+  def deposit(username: String, amount: Double): Either[FundsError, Double] = change(username, amount)
+
+  def withdraw(username: String, amount: Double): Either[FundsError, Double] = change(username, -amount)
+
+  private def change(username: String, delta: Double): Either[FundsError, Double] = synchronized:
+    rows.get(username.toLowerCase) match
+      case None                                   => Left(FundsError.UnknownUser)
+      case Some(Row(_, _, Some(table)))           => Left(FundsError.Seated(table))
+      case Some(row) if row.balance + delta < 0   => Left(FundsError.InsufficientFunds)
+      case Some(row) =>
+        rows = rows.updated(username.toLowerCase, row.copy(balance = row.balance + delta))
+        Right(row.balance + delta)
 
   def releaseTable(tableId: String): Unit = synchronized:
     rows = rows.map((key, row) => key -> (if row.tableId.contains(tableId) then row.copy(tableId = None) else row))
