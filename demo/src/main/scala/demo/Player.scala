@@ -3,7 +3,7 @@ package demo
 import protocol.{ClientMessage, MessageCodec, ServerMessage}
 import protocol.ClientMessage.{AnswerInsurance, JoinTable, PlaceBet, Stand}
 import protocol.LobbyApi
-import protocol.LobbyApi.{AssignRequest, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
+import protocol.LobbyApi.{AmountRequest, AssignRequest, Funds, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
 import protocol.ServerMessage.{ActionRequest, BetRequest, ErrorMessage, HandResults, InsuranceOffer, JoinAccepted, JoinRejected, TableUpdate}
 import protocol.PlayerView
 import upickle.default.ReadWriter
@@ -24,13 +24,19 @@ final class Lobby(baseUrl: String):
       case (200, body) => LobbyApi.decode[LoggedIn](body).toOption
       case _           => None
 
+  /** Deposits `amount` fiches: the new balance, or `None` if the lobby refused or did not answer. */
+  def deposit(token: String, amount: Double): Option[Double] =
+    post(LobbyApi.DepositPath, AmountRequest(token, amount)) match
+      case (200, body) => LobbyApi.decode[Funds](body).toOption.map(_.balance)
+      case _           => None
+
   /** Where the lobby sends the player now, or the status of the refusal (0 if the lobby did not answer). */
   def assign(token: String): Either[Int, TableAddress] =
     post(LobbyApi.AssignPath, AssignRequest(token)) match
       case (200, body) => LobbyApi.decode[TableAddress](body).left.map(_ => 200)
       case (status, _) => Left(status)
 
-  /** Where the table of the player is now (see `/locate`), or the status of the refusal (0 if no answer). */
+  /** Where the table of the player is now, or the status of the refusal (0 if no answer). */
   def locate(token: String): Either[Int, TableAddress] =
     post(LobbyApi.LocatePath, LocateRequest(token)) match
       case (200, body) => LobbyApi.decode[TableAddress](body).left.map(_ => 200)
@@ -107,7 +113,7 @@ object TableConnection:
 /** A player sitting at a table: where, through which connection, and with how much money. */
 final case class Seat(address: TableAddress, connection: TableConnection, balance: Double)
 
-/** A player of the demo: a new user, registered and logged in at the lobby. */
+/** A player of the demo: a new user, registered and logged in at the lobby, who has made a first deposit. */
 final class Player private (lobby: Lobby, val name: String, token: String, val initialBalance: Double):
 
   /** Asks the lobby for a table, as many times as needed within the timeout, and sits down there. */
@@ -185,8 +191,14 @@ final class Player private (lobby: Lobby, val name: String, token: String, val i
 object Player:
   val Password = "demo-password"
 
+  /** A new account has no money and the lobby refuses a seat below the minimum bet: every player deposits this first. */
+  val FirstDeposit = 100.0
+
   /** A new user, whose name tells the scenario and is different at every run. */
   def signUp(lobby: Lobby, prefix: String): Option[Player] =
     val name = s"$prefix${System.currentTimeMillis() % 1_000_000}"
     lobby.register(name, Password)
-    lobby.login(name, Password).map(session => Player(lobby, name, session.token, session.balance))
+    for
+      session <- lobby.login(name, Password)
+      balance <- lobby.deposit(session.token, FirstDeposit) // without money the lobby gives no seat
+    yield Player(lobby, name, session.token, balance)

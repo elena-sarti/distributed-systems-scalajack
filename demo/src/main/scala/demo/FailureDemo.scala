@@ -19,14 +19,7 @@ final class Report(val scenario: String):
   def passed: Boolean = lines.nonEmpty && lines.forall(_._1)
 
 /** The failures of the decision record played on the real deployment of `docker-compose.yml`: the demo starts it
- * afresh, sends a player to the table, breaks a node or the network with Docker, and prints what it observes.
- *
- * Run from the root of the repository, after building the image once (`docker compose build`):
- * {{{
- *   sbt "demo/run"            all the scenarios
- *   sbt "demo/run crash"      only one of them: crash, partition, backup
- * }}}
- */
+ * afresh, sends a player to the table, breaks a node or the network with Docker, and prints what it observes. */
 object FailureDemo:
   private val lobby = Lobby("http://localhost:9080")
 
@@ -99,7 +92,7 @@ object FailureDemo:
     view.fold("nothing")(v => s"cards ${v.cards.map(card => s"${card.value}-${card.suit}").mkString(" ")}, balance ${v.balance}")
 
   /** The player has lost the table: like the client, it asks the lobby where the table is now and sits down again. It
-   * must find its seat as it left it (`before`), and finish the hand there: lost, pushed or won, never anything else. */
+   * must find its seat as it left it, and finish the hand there: lost, pushed or won, never anything else. */
   private def backOnThePromotedNode(report: Report, player: Player, before: Option[PlayerView]): Unit =
     val announced = Docker.awaitLog(LobbyService, Reaction)(_.contains(s"registered at localhost:$PromotedPort"))
     report.check("the promoted node announces itself to the lobby as the table", announced.isDefined)
