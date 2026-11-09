@@ -1,8 +1,7 @@
 package server.lobby
 
-import protocol.LobbyApi
 import protocol.LobbyApi.{ApiError, LocateRequest, TableAddress}
-import server.auth.{JsonPostEndpoint, SessionTokens}
+import server.auth.{AuthenticatedEndpoint, SessionTokens}
 import server.db.BalanceRepository
 
 /** `POST /locate`: a logged in player who lost the connection with their table (e.g. its node failed and the
@@ -14,16 +13,12 @@ import server.db.BalanceRepository
  * As for `/assign`, the token is checked here and never written in the log.
  */
 final class TableLocationEndpoint(balances: BalanceRepository, registry: TableRegistry, tokens: SessionTokens)
-  extends JsonPostEndpoint("Table location"):
+  extends AuthenticatedEndpoint[LocateRequest]("Table location", tokens):
   import TableLocationEndpoint.*
 
-  protected def answer(body: String): (Int, String) =
-    LobbyApi.decode[LocateRequest](body) match
-      case Left(message)  => (400, json(ApiError(message)))
-      case Right(request) =>
-        tokens.verify(request.token) match
-          case None           => (401, json(ApiError(InvalidToken)))
-          case Some(username) => reply(balances.tableOf(username))
+  protected def tokenOf(request: LocateRequest): String = request.token
+
+  protected def answerFor(username: String, request: LocateRequest): (Int, String) = reply(balances.tableOf(username))
 
   private def reply(tableId: Option[String]): (Int, String) = tableId match
     case None => (404, json(ApiError(NotSeated)))
@@ -33,6 +28,6 @@ final class TableLocationEndpoint(balances: BalanceRepository, registry: TableRe
         case _ => (503, json(ApiError(NotAvailable))) // unknown to the lobby, or silent: its backup may be taking over
 
 object TableLocationEndpoint:
-  val InvalidToken = "Invalid or expired session token"
+  val InvalidToken = AuthenticatedEndpoint.InvalidToken
   val NotSeated    = "You are not seated at any table"
   val NotAvailable = "Your table is not reachable yet, try again in a moment"
