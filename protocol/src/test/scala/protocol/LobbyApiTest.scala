@@ -41,6 +41,20 @@ class LobbyApiTest extends AnyFunSuite:
     LobbyApi.decode[LocateRequest](LobbyApi.encode(request)) shouldBe Right(request)
     request.toString should not include "a-token"
 
+  test("the requests on the money survive a JSON round-trip and do not show the token"):
+    val amount = AmountRequest("a-token", 12.5)
+    LobbyApi.decode[AmountRequest](LobbyApi.encode(amount)) shouldBe Right(amount)
+    val balance = BalanceRequest("a-token")
+    LobbyApi.decode[BalanceRequest](LobbyApi.encode(balance)) shouldBe Right(balance)
+    List(amount.toString, balance.toString).foreach(_ should not include "a-token")
+    amount.toString should include("12.5")
+
+  test("the answer on the money survives a JSON round-trip"):
+    LobbyApi.decode[Funds](LobbyApi.encode(Funds(87.5))) shouldBe Right(Funds(87.5))
+
+  test("a deposit request without an amount is rejected"):
+    LobbyApi.decode[AmountRequest]("""{"token":"t"}""").isLeft shouldBe true
+
   test("the answers survive a JSON round-trip"):
     LobbyApi.decode[Registered](LobbyApi.encode(Registered("Alice"))) shouldBe Right(Registered("Alice"))
     LobbyApi.decode[ApiError](LobbyApi.encode(ApiError("Username already taken"))) shouldBe Right(ApiError("Username already taken"))

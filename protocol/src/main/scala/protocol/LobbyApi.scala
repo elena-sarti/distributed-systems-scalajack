@@ -52,8 +52,23 @@ object LobbyApi:
   /** `POST` an [[AssignRequest]] (a logged in player asking for a seat): answered by
    * - 200 and a [[TableAddress]]: connect to that table, directly;
    * - 202 and a [[TableStarting]]: no seat yet, a new table is starting, ask again in a few seconds;
-   * - 401 (invalid token) or 503 (server full, or a new table could not be started) and an [[ApiError]]. */
+   * - 401 (invalid token), 403 (the balance is below the minimum bet: deposit first) or 503 (server full, or a new
+   *   table could not be started) and an [[ApiError]]. */
   val AssignPath = "/assign"
+
+  // The money of a player who is not at a table. The three paths answer in the same way, with one of
+  //   - 200 and [[Funds]]: the balance now;
+  //   - 400 (invalid amount) or 401 (invalid token) or 404 (unknown user) or 409 (the player is sitting at a table,
+  //     or the balance is lower than the amount to withdraw) and an [[ApiError]].
+
+  /** `POST` a [[BalanceRequest]]: the balance the player has now. */
+  val BalancePath = "/balance"
+
+  /** `POST` an [[AmountRequest]]: adds the amount to the balance. */
+  val DepositPath = "/deposit"
+
+  /** `POST` an [[AmountRequest]]: takes the amount from the balance. */
+  val WithdrawPath = "/withdraw"
 
   // The bodies that hold a password or a token do not show it when printed, so it cannot
   // end up in a log by mistake.
@@ -109,6 +124,17 @@ object LobbyApi:
 
   final case class AssignRequest(token: String) derives ReadWriter:
     override def toString: String = "AssignRequest(***)"
+
+  /** A logged in player asking for their balance. */
+  final case class BalanceRequest(token: String) derives ReadWriter:
+    override def toString: String = "BalanceRequest(***)"
+
+  /** A logged in player asking to deposit or to withdraw `amount` fiches (positive, at most two decimals). */
+  final case class AmountRequest(token: String, amount: Double) derives ReadWriter:
+    override def toString: String = s"AmountRequest(***,$amount)"
+
+  /** The balance of the player after the request. */
+  final case class Funds(balance: Double) derives ReadWriter
 
   /** Where to play: after this the client talks to the table node, and the lobby is not involved any more. */
   final case class TableAddress(tableId: String, host: String, wsPort: Int) derives ReadWriter
