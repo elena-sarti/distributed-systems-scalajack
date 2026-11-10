@@ -20,7 +20,7 @@ class OnlineSessionTest extends AnyFunSuite:
   private final class ScriptedConsole(lines: String*) extends Console[IO]:
     private val input = Iterator(lines*)
     val output        = ListBuffer[String]()
-    override def readLine: IO[String]                            = IO(synchronized(if input.hasNext then input.next() else throw IllegalStateException("no more input")))
+    override def readLine: IO[String] = IO(synchronized(if input.hasNext then input.next() else throw IllegalStateException("no more input")))
     def readLineWithCharset(charset: Charset): IO[String] = readLine
     def print[A](a: A)(using S: Show[A]): IO[Unit]        = IO(synchronized(output += S.show(a)))
     def println[A](a: A)(using S: Show[A]): IO[Unit]      = IO(synchronized(output += S.show(a)))

@@ -4,11 +4,11 @@ import java.time.{Duration, Instant}
 import java.util.concurrent.TimeUnit
 import scala.io.Source
 
-/** The few Docker commands the demo needs, run with the `docker` client of this machine: the deployment is the one of
- * `docker-compose.yml`, started from the root of the repository. */
+/** The few Docker commands the demo needs, run with the docker client of this machine: the deployment is the one of
+ * docker-compose.yml, started from the root of the repository. */
 object Docker:
 
-  /** Exit code and output (standard output and error together) of `docker args...`. */
+  /** Exit code and output (standard output and error together) of docker args.... */
   def run(args: String*): (Int, String) =
     val process = ProcessBuilder(("docker" +: args)*).redirectErrorStream(true).start()
     val output  = Source.fromInputStream(process.getInputStream, "UTF-8").mkString
@@ -37,7 +37,7 @@ object Docker:
   /** The partition heals. */
   def reconnect(container: String, network: String): Unit = must("network", "connect", network, container)
 
-  /** The log of a service of the deployment (also of a container that has been killed). */
+  /** The log of a service of the deployment. */
   def logLines(service: String): List[String] = run("compose", "logs", "--no-log-prefix", service)._2.linesIterator.toList
 
   /** How many lines of the log satisfy `wanted`: taken before an action, it tells which lines come after it. */

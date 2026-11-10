@@ -24,7 +24,7 @@ final class Lobby(baseUrl: String):
       case (200, body) => LobbyApi.decode[LoggedIn](body).toOption
       case _           => None
 
-  /** Deposits `amount` fiches: the new balance, or `None` if the lobby refused or did not answer. */
+  /** Deposits amount fiches: the new balance, or None if the lobby refused or did not answer. */
   def deposit(token: String, amount: Double): Option[Double] =
     post(LobbyApi.DepositPath, AmountRequest(token, amount)) match
       case (200, body) => LobbyApi.decode[Funds](body).toOption.map(_.balance)
@@ -166,8 +166,8 @@ final class Player private (lobby: Lobby, val name: String, token: String, val i
     seat.connection.await(timeout) { case TableUpdate(table) if table.players.exists(_.name == name) =>
       table.players.find(_.name == name).get }
 
-  /** Plays the hand in progress to its end, standing at once and refusing the insurance: the balance afterwards, or
-   * the current one if no hand is being played (the table asks for a bet). */
+  /** Plays the hand in progress to its end, standing at once and refusing the insurance: the balance afterward, or
+   * the current one if no hand is being played. */
   def finishHand(seat: Seat, timeout: Duration = Duration.ofSeconds(30)): Option[Double] =
     val end = Instant.now().plus(timeout)
     var result = Option.empty[Double]
@@ -180,7 +180,7 @@ final class Player private (lobby: Lobby, val name: String, token: String, val i
         case _                            => ()
     result
 
-  /** Bets: `Right` if the bet is taken (the cards are dealt), otherwise the reason the table gives. */
+  /** The user tries to bet: if the bet is taken the cards are dealt, otherwise it shows the reason the table gives. */
   def tryToBet(seat: Seat, amount: Int, timeout: Duration = Duration.ofSeconds(5)): Either[String, Unit] =
     seat.connection.send(PlaceBet(amount))
     seat.connection.await(timeout) {

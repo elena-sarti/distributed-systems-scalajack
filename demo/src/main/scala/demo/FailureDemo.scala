@@ -18,7 +18,7 @@ final class Report(val scenario: String):
 
   def passed: Boolean = lines.nonEmpty && lines.forall(_._1)
 
-/** The failures of the decision record played on the real deployment of `docker-compose.yml`: the demo starts it
+/** The failures of the decision record played on the real deployment of docker-compose.yml: the demo starts it
  * afresh, sends a player to the table, breaks a node or the network with Docker, and prints what it observes. */
 object FailureDemo:
   private val lobby = Lobby("http://localhost:9080")
@@ -31,8 +31,8 @@ object FailureDemo:
   private val PromotedPort = 9191
   private val Bet          = 10
 
-  /** Where a failure must have been noticed and acted upon: heartbeat timeout, plus a period for the lobby to notice
-   * it too, plus a period for the request to be repeated, with some margin for Docker. */
+  /** Where a failure must have been noticed and acted upon: heartbeat timeout plus a period for the lobby to notice
+   * it too, plus a period for the request to be repeated with some margin for Docker. */
   private val Reaction = Duration.ofSeconds(20)
 
   private val scenarios: List[(String, String, () => Report)] = List(
@@ -91,7 +91,7 @@ object FailureDemo:
   private def describe(view: Option[PlayerView]): String =
     view.fold("nothing")(v => s"cards ${v.cards.map(card => s"${card.value}-${card.suit}").mkString(" ")}, balance ${v.balance}")
 
-  /** The player has lost the table: like the client, it asks the lobby where the table is now and sits down again. It
+  /** The player has lost the table: it asks the lobby where the table is now and sits down again. It
    * must find its seat as it left it, and finish the hand there: lost, pushed or won, never anything else. */
   private def backOnThePromotedNode(report: Report, player: Player, before: Option[PlayerView]): Unit =
     val announced = Docker.awaitLog(LobbyService, Reaction)(_.contains(s"registered at localhost:$PromotedPort"))
