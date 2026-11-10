@@ -2,13 +2,11 @@ package server.lobby
 
 import java.time.{Duration, Instant}
 
-/** Finds the tables that stopped sending heartbeats and marks them unavailable, so that nobody is sent
- * there. A table that sends a heartbeat again becomes available (that is done by the registry).
- *
- * It does one check at a time: how often it is called is up to the caller (see `PeriodicTask`).
+/** Marks as unavailable the tables that stopped sending heartbeats. Each call does one check, and how often to call it is
+ * up to the caller.
  *
  * @param timeout how long a table may stay silent.
- * @param clock   the current time; the tests replace it.
+ * @param clock   the current time.
  */
 final class HeartbeatMonitor(registry: TableRegistry, timeout: Duration, clock: () => Instant = Instant.now):
 

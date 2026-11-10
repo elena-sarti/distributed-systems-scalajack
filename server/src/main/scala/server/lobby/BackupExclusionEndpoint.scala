@@ -4,9 +4,8 @@ import protocol.LobbyApi
 import protocol.LobbyApi.{ApiError, ExclusionGranted, ExclusionRequest}
 import server.auth.JsonPostEndpoint
 
-/** `POST /tables/exclude-backup`: the primary of a table, which cannot reach its backup, asks to go on without it.
- * The decision is the arbiter's; this only turns it into an HTTP answer: 200 (granted), 409 (the epoch is not newer:
- * this primary has been replaced), 404 (unknown table). */
+/** `POST /tables/exclude-backup`: the primary of a table that cannot reach its backup asks to go on without it.
+ *  200 if granted, 409 if the primary has been replaced, 404 if the table is unknown. */
 final class BackupExclusionEndpoint(arbiter: PromotionArbiter) extends JsonPostEndpoint("Backup exclusion"):
 
   protected def answer(body: String): (Int, String) =

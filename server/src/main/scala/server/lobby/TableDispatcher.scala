@@ -4,32 +4,25 @@ import java.time.{Duration, Instant}
 
 /** What happens to a player who asks for a seat. */
 enum Assignment:
-  /** The seat is promised: the player connects to this table (address in the table). */
+  /** A seat is promised, so the player connects to this table. */
   case Assigned(table: TableInfo)
-  /** No seat now, but the node of this table is being started: the player should ask again shortly. */
+  /** No seat now but the node of this table is starting, so the player should ask again shortly. */
   case Starting(tableId: String)
-  /** No seat and no more tables can be started: the server is full. */
+  /** No seat and no more tables can be started. */
   case Full
   /** No seat, and the node of this table could not be started. */
   case ActivationFailed(tableId: String)
 
-/** Decides to which table each player goes: the first with a free seat; if there is none, it starts a new
- * node, as long as the maximum number of tables is not reached; beyond that, "full".
+/** Decides to which table each player goes. It picks the first table with a free seat, otherwise it starts a new node if
+ * the maximum is not reached, otherwise the server is full.
+ * Decisions are taken one at a time.
+ * Docker is called outside the lock, so the other requests are answered at once with "starting" and the heartbeats are not delayed.
  *
- * The decision is taken one request at a time (`synchronized`), so "look for a seat, else start a node"
- * cannot be done twice for the same need. The seats themselves are promised by the registry, which is
- * atomic also against the heartbeats that arrive meanwhile.
- *
- * Docker is called outside the lock: it may take seconds, and in the meantime the other requests are
- * answered at once ("starting"). Otherwise they would wait, holding the lobby's HTTP threads, which are
- * the same ones that receive the heartbeats: a heartbeat answered late makes a healthy table look dead.
- *
- * @param pool         the ids of the tables that can exist, in the order they are started. Its size is the
- *                     maximum number of tables: nothing else is ever started.
+ * @param pool         the ids of the tables that can exist, in the order they are started. Its size is the maximum
+ *                     number of tables.
  * @param seatHold     how long a promised seat stays taken if the player does not sit down.
- * @param startTimeout how long a node that was asked to start may take to register, before it is
- *                     considered lost and its start can be asked again.
- * @param clock        the current time; the tests replace it.
+ * @param startTimeout how long a node asked to start may take to register before it can be asked again.
+ * @param clock        the current time.
  */
 final class TableDispatcher(registry: TableRegistry, provisioner: TableProvisioner, pool: Seq[String],
                             seatHold: Duration = TableDispatcher.DefaultSeatHold,
@@ -39,6 +32,7 @@ final class TableDispatcher(registry: TableRegistry, provisioner: TableProvision
   /** The nodes asked to start that have not registered yet, and when they were asked. */
   private var starting = Map.empty[String, Instant]
 
+  /** Promises a seat to a player, or tells why it cannot. */
   def assign(): Assignment =
     decide() match
       case Left(answer)  => answer
@@ -59,8 +53,8 @@ final class TableDispatcher(registry: TableRegistry, provisioner: TableProvision
       synchronized { starting = starting - nodeId } // not on its way after all: the next request tries again
       Assignment.ActivationFailed(nodeId)
 
-  /** A node that has registered is no longer starting (its seats are now in the registry); one that took
-   * too long is forgotten, so that it can be asked again instead of blocking every new table. */
+  /** Forgets the nodes that have registered, whose seats are now in the registry, and those that took too long, so they can
+   * be asked again instead of blocking every new table. */
   private def forgetArrivedOrLost(now: Instant): Unit =
     starting = starting.filter((id, since) => registry.find(id).isEmpty && since.plus(startTimeout).isAfter(now))
 

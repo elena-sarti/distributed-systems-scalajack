@@ -11,23 +11,16 @@ import java.util.concurrent.{Executors, TimeUnit}
 import scala.util.Using
 import scala.util.control.NonFatal
 
-/** Starts the containers of the tables by asking the Docker daemon (`POST /containers/{name}/start` on its
- * Unix socket). The containers must already exist: they are created, not started, when the system is set
- * up (see docker-compose.yml). Starting a container that is already running is not an error.
- *
- * To reach the daemon the lobby needs its socket mounted in the container, which gives the lobby wide
- * control of Docker on the host. It is a choice for the simulation of the nodes; a real deployment would use
- * an orchestrator with narrower permissions.
- *
- * JDK 16 or later talks to Unix sockets by itself, and the request is so small that it is written by
- * hand instead of adding a Docker library.
+/** Starts the containers of the tables through the Docker daemon, on its Unix socket. The containers must already exist
+ * and starting one that is running is not an error.
+ * The lobby needs the socket mounted, which gives it wide control of Docker and is acceptable for a simulation.
+ * The request is written by hand to avoid a Docker library.
  *
  * @param socket        the Unix socket of the daemon.
- * @param timeout       the longest the whole request may take: a daemon that does not answer must not block the
- *                      dispatcher, which waits for this call.
- * @param containerName the name of the container of a table (by default the id of the table itself).
- * @param backupName    the name of the container of the backup of a table, if tables have one: it is started first,
- *                      so that the table finds it at once. A table whose backup does not exist starts anyway, alone.
+ * @param timeout       the longest the whole request may take.
+ * @param containerName the name of the container of a table, by default its id.
+ * @param backupName    the name of the container of the backup of a table, if it has one. It is started first and a
+ *                      missing backup does not prevent the table from starting.
  */
 final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"),
                                    timeout: Duration = Duration.ofSeconds(5),
@@ -44,15 +37,15 @@ final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"
     else
       post(s"/containers/$name/start") match
         case Some(204 | 304) => true // started now, or it was already running
-        case Some(404) =>
+        case Some(404)       =>
           System.err.println(s"Cannot start table $tableId: container '$name' does not exist (it must be created first)")
           false
-        case other =>
+        case other           =>
           System.err.println(s"Cannot start table $tableId: ${other.fold("no answer from Docker")(status => s"Docker answered $status")}")
           false
 
-  /** A backup that cannot be started is not a reason to keep the table down: the table goes on without it, once the
-   * lobby agrees (F5), so this only writes in the log. */
+  /** A backup that cannot be started does not keep the table down, since the table goes on without it once the lobby
+   * agrees. So this only writes in the log. */
   private def startBackup(tableId: String, name: String): Unit =
     if !TableProvisioner.isValidId(name) then
       System.err.println(s"Cannot start the backup of table $tableId: '$name' is not a valid container name")
@@ -62,7 +55,7 @@ final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"
       case other =>
         System.err.println(s"Cannot start the backup of table $tableId: ${other.fold("no answer from Docker")(status => s"Docker answered $status")}")
 
-  /** The status of the answer, or `None` if there is none (no daemon, no permission, timeout...). */
+  /** The status of the answer, or `None` if there is none. */
   private def post(path: String): Option[Int] =
     try
       Using.resource(SocketChannel.open(StandardProtocolFamily.UNIX)): channel =>
@@ -79,7 +72,7 @@ final class DockerTableProvisioner(socket: Path = Path.of("/var/run/docker.sock"
     catch case NonFatal(_) => None
 
 object DockerTableProvisioner:
-  /** Closes the connections that take too long. A daemon thread: it must not keep the JVM alive. */
+  /** Closes the connections that take too long. Its thread is a daemon, so it does not keep the JVM alive. */
   private val Watchdog = Executors.newSingleThreadScheduledExecutor: runnable =>
     val thread = Thread(runnable, "docker-watchdog")
     thread.setDaemon(true)

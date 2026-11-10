@@ -5,14 +5,10 @@ import server.auth.{AuthenticatedEndpoint, SessionTokens}
 import server.funds.FundsService
 import utils.ModelExports.Game
 
-/** `POST /assign`: a logged in player asks where to play. The lobby only says where: from then on the
- * client talks to the table node directly, and no move of the game passes through the lobby.
- *
- * The token is checked here so that nobody can take seats without having logged in; the table checks it
- * again at the WebSocket handshake. The token is never written in the log.
- *
- * A player who cannot afford the minimum bet is refused (403) before any seat is taken: they have to deposit first.
- */
+/** `POST /assign`: a logged in player asks where to play. The lobby only says where, then the client talks to the table
+ * directly.
+ * A player who cannot afford the minimum bet is refused with 403 and has to deposit first.
+ * The token is never logged. */
 final class TableAssignmentEndpoint(dispatcher: TableDispatcher, tokens: SessionTokens, funds: FundsService)
   extends AuthenticatedEndpoint[AssignRequest]("Table assignment", tokens):
   import TableAssignmentEndpoint.*
@@ -27,13 +23,13 @@ final class TableAssignmentEndpoint(dispatcher: TableDispatcher, tokens: Session
       (403, json(ApiError(NotEnoughMoney)))
 
   private def reply(username: String, assignment: Assignment): (Int, String) = assignment match
-    case Assignment.Assigned(table) =>
+    case Assignment.Assigned(table)          =>
       System.out.println(s"$username assigned to table ${table.id}")
       (200, json(TableAddress(table.id, table.host, table.wsPort)))
-    case Assignment.Starting(tableId) =>
+    case Assignment.Starting(tableId)        =>
       System.out.println(s"No seat for $username: table $tableId is starting")
       (202, json(TableStarting(tableId)))
-    case Assignment.Full =>
+    case Assignment.Full                     =>
       System.out.println(s"No seat for $username: the server is full")
       (503, json(ApiError(ServerFull)))
     case Assignment.ActivationFailed(tableId) =>

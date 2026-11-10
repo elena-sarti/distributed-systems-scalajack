@@ -6,11 +6,9 @@ import server.auth.JsonPostEndpoint
 import upickle.default.ReadWriter
 import scala.util.chaining.*
 
-/** What the lobby does when a table node calls it: decode the body, change the registry, answer.
- * The two calls (registration, heartbeat) differ only in the registry operation, so the rest is here (DRY).
- *
- * A replicated table sends its epoch too: a node whose epoch is older than the current one has been replaced by
- * another node (e.g. it was cut off and its backup was promoted), so it gets 409 and the registry is not touched.
+/** What the lobby does when a table node calls it, which is decoding the body, changing the registry and answering. A node
+ * whose epoch is older than the current one has been replaced and gets 409.
+ * Registration and heartbeat share all the rest.
  *
  * @tparam Request the body sent by the node.
  */
@@ -33,7 +31,7 @@ abstract class TableNodeEndpoint[Request: ReadWriter](operation: String, epochs:
           table => (200, json(TableAck(table.id)))
         )
 
-  /** Unknown table: 404, so the node knows it has to register again. Anything else is a wrong request: 400. */
+  /** An unknown table gets 404, so the node registers again. Anything else is a wrong request and gets 400. */
   private def failure(error: RegistryError): (Int, String) = error match
     case RegistryError.UnknownTable(id)         => (404, json(ApiError(s"Unknown table '$id'")))
     case RegistryError.InvalidTable(reason)     => (400, json(ApiError(reason)))
