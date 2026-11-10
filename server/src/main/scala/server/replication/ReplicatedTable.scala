@@ -6,19 +6,14 @@ import protocol.ServerMessage.ErrorMessage
 import server.{Cashier, Connection, SeatAvailability, SessionHandler, TableHandler}
 import scala.collection.mutable.ListBuffer
 
-/** A table whose every change reaches the backup before anybody outside can see it: passive replication
- * with output commit.
+/** A table whose every change reaches the backup before anybody outside can see it, which is passive replication with
+ * output commit. The messages to the clients and the balances to save are held back until the backup stores the new
+ * state. If it does not, the event is undone and the sender is told to try again.
  *
- * Each event runs on the table as usual, but what the table would send to the clients and the balances it
- * would save are held back. If the state has changed it is sent to the backup, and only when the backup has
- * stored it are those effects let out. If the backup does not store it the event is undone, as if it had never
- * arrived, and whoever sent it is told to try again. So the clients and the database never see a state the backup
- * does not have, and the backup can go on from wherever the primary stops.
- *
- * Like the table, it runs on the single writer: the wait for the backup holds up the whole table, on purpose.
- *
- * @param epoch    the epoch this primary starts with (see [[ReplicaUpdate]]).
- * @param newTable builds the table on the cashier it must use.
+ * @param cashier    the cashier the table uses.
+ * @param replicator how the new states are sent to the backup.
+ * @param epoch      the epoch this primary starts with (see [[ReplicaUpdate]]).
+ * @param newTable   builds the table on the cashier it must use.
  */
 final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Long,
                             newTable: Cashier => TableHandler = cashier => TableHandler(cashier = cashier))
@@ -48,19 +43,17 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   def isAlone: Boolean = alone
 
   /** The lobby has agreed that the table goes on without its backup, with `newEpoch` (see [[BackupExcluder]]).
-   * From the next event on nothing waits for the backup: the effects go out as soon as the table produces them. */
+   * From the next event on nothing waits for the backup. */
   def goOnAlone(newEpoch: Long): Unit =
     epochNow = newEpoch // before the flag: whoever sees the table alone also sees its new epoch
     alone = true
 
-  /** The backup answers again (see [[BackupExcluder]]). At the next event, before it, the table sends it its whole
-   * state: if the backup stores it, from then on every move waits for the backup again. If not, the table stays alone
-   * and can be asked again. */
+  /** The backup answers again (see [[BackupExcluder]]). Before the next event the table sends it its whole state. If the
+   * backup stores it every move waits for it again, otherwise the table stays alone. */
   def takeBackupBack(): Unit = backupIsBack = true
 
-  /** The lobby says that this primary has been replaced: its epoch is old, another node plays the table now (e.g.
-   * this one was cut off and its backup has been promoted). From now on nothing this table does may reach the
-   * clients or the database, where it would contradict the new primary: every event is refused. */
+  /** The lobby says that this primary has been replaced. From now on every event is refused, so nothing reaches the clients
+   * or the database to contradict the new primary. */
   def stepDown(): Unit = replaced = true
 
   def isReplaced: Boolean = replaced
@@ -77,9 +70,8 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
     if !replaced && !alone && !backupHasState then replicate()
     replicated(None)(table.onTick())
 
-  /** The node is going down: the players leave with their money, as with a move, only once the backup knows it (or
-   * if the table is playing alone). If the backup cannot be told, nothing is written: the backup still has the
-   * players, and if it takes over it settles them itself. A primary that has been replaced writes nothing at all. */
+  /** The players leave with their money only once the backup knows it, or if the table plays alone.
+   * A replaced primary writes nothing. */
   override def onStop(): Unit =
     if !replaced then
       table.onStop()
@@ -100,8 +92,8 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
       table.restore(before, connections.get)
       sender.foreach(_.send(ErrorMessage(TablePaused)))
 
-  /** The backup was left behind while the table played alone: the current state is all it needs, since it replaces
-   * whatever the backup had. Once stored, the backup has every move again, so it can again take over if needed. */
+  /** The backup was left behind while the table played alone. The current state is all it needs since it replaces whatever
+   * it had, and once stored it can take over again. */
   private def resynchronise(): Unit =
     backupIsBack = false
     if replicate() then
@@ -123,12 +115,12 @@ object ReplicatedTable:
     private val effects = ListBuffer[() => Unit]()
     private val seated  = ListBuffer[(String, Double)]()
 
-    /** The connection as the table sees it: what is sent to it waits. */
+    /** The connection as the table sees it, where what is sent waits. */
     def connection(client: Connection): Connection = new Connection:
       val id: String = client.id
       def send(message: ServerMessage): Unit = effects += (() => client.send(message))
 
-    /** Sitting down has to happen at once, because the table needs the balance; saving it can wait. */
+    /** Sitting down happens at once since the table needs the balance, saving it can wait. */
     val cashier: Cashier = new Cashier:
       def sitDown(username: String): Either[String, Double] =
         val result = real.sitDown(username)
@@ -142,7 +134,7 @@ object ReplicatedTable:
       clear()
       now.foreach(_())
 
-    /** The event is undone: whoever sat down during it is not at the table, so they leave with what they brought. */
+    /** Undoes the event. Whoever sat down during it leaves with what they brought. */
     def discard(): Unit =
       val undone = seated.toList
       clear()

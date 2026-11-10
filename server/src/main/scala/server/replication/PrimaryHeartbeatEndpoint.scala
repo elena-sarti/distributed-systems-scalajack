@@ -5,9 +5,8 @@ import protocol.LobbyApi.ApiError
 import server.auth.JsonPostEndpoint
 import server.liveness.{FailureDetector, Peer}
 
-/** `POST /replica/heartbeat` on the backup: the primary says it is alive. Answers 200 when it is the primary the
- * backup follows (a sign of life for the detector), 409 when it has been replaced, 400 when the body is not a
- * heartbeat. The backup's answer is in turn the proof, for the primary, that the backup is alive.
+/** `POST /replica/heartbeat` on the backup: the primary says it is alive. Answers 200 if it is the primary the backup
+ * follows, 409 if it has been replaced and 400 if the body is not a heartbeat.
  *
  * @param detector the failure detector of the backup node, where the primary is watched.
  */
@@ -23,5 +22,5 @@ final class PrimaryHeartbeatEndpoint(backup: BackupReplica, detector: FailureDet
       case Right(_) => (409, json(ApiError(ReplicaEndpoint.Superseded)))
 
 object PrimaryHeartbeatEndpoint:
-  /** A path of its own: the server picks the longest matching one, so it does not clash with `/replica`. */
+  /** The server picks the longest matching path, so it does not clash with `/replica`. */
   val Path = "/replica/heartbeat"

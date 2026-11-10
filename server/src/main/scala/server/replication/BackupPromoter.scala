@@ -3,15 +3,11 @@ package server.replication
 import server.liveness.{FailureDetector, Peer}
 import server.{PromotionAnswer, PromotionGateway}
 
-/** What a backup does when it stops hearing its primary: asks the lobby for the promotion, and if the lobby agrees
- * (two of three: the decision record) takes the place of the primary.
+/** What a backup does when it stops hearing its primary. At every `tick` it asks the lobby for the promotion until the
+ * lobby agrees, then it takes the place of the primary and does nothing more.
  *
- * `tick` is called at every period by the liveness task, so the request is repeated for as long as the primary is
- * suspected and the lobby has not agreed: the lobby may notice the silence a moment after the backup, or may be
- * unreachable for a while. Once promoted it does nothing more.
- *
- * @param takeOver starts the table in place of the primary, from the last state received (`None` if the primary
- *                 never sent one) and with the new epoch. It runs once.
+ * @param takeOver starts the table in place of the primary, from the last state received (`None` if there is none) and
+ *                  with the new epoch.
  */
 final class BackupPromoter(tableId: String, replica: BackupReplica, peers: FailureDetector[Peer],
                            lobby: PromotionGateway, takeOver: (Option[TableSnapshot], Long) => Unit):

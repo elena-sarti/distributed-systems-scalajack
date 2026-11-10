@@ -9,15 +9,15 @@ import scala.util.control.NonFatal
 
 /** The backup reached over HTTP (see [[ReplicaEndpoint]] and [[PrimaryHeartbeatEndpoint]]).
  *
- * @param backupUrl the address of the backup node, e.g. `http://table-1-backup:8080`.
- * @param timeout   how long the table waits for the backup: while it waits, nobody at the table can play.
+ * @param backupUrl the address of the backup node.
+ * @param timeout   how long the table waits for the backup, during which nobody at the table can play.
  */
 final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSeconds(2)) extends Replicator, BackupHeartbeats:
   private val http         = HttpClient.newBuilder().connectTimeout(timeout).build()
   private val updateUri    = URI.create(backupUrl.stripSuffix("/") + ReplicaEndpoint.Path)
   private val heartbeatUri = URI.create(backupUrl.stripSuffix("/") + PrimaryHeartbeatEndpoint.Path)
 
-  /** Whether the last update went through: only the changes are logged, not every failed attempt. */
+  /** Whether the last update went through, so that only the changes are logged. */
   private var reachable = true
 
   def replicate(update: ReplicaUpdate): Boolean =
@@ -29,8 +29,8 @@ final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSec
       else System.err.println(s"The backup did not store the table (${describe(status)}): the table is paused")
     stored
 
-  /** Runs on the thread of the heartbeats, not on the table's: it does not touch `reachable`, which belongs
-   * to the table's thread. The failures are not logged here, the failure detector signals them. */
+  /** Runs on the thread of the heartbeats and does not touch `reachable`, which belongs to the thread of the table.
+   * Failures are not logged here since the failure detector signals them. */
   def heartbeat(epoch: Long): Boolean = post(heartbeatUri, ReplicaHeartbeat(epoch)).contains(200)
 
   private def describe(status: Option[Int]): String = status match
@@ -38,7 +38,7 @@ final class HttpReplicator(backupUrl: String, timeout: Duration = Duration.ofSec
     case Some(other) => s"status $other"
     case None        => "no answer"
 
-  /** The status of the answer, or `None` if there was no answer (connection refused, timeout...). */
+  /** The status of the answer, or `None` if there was none. */
   private def post[T: ReadWriter](uri: URI, body: T): Option[Int] =
     try
       val request = HttpRequest.newBuilder(uri)

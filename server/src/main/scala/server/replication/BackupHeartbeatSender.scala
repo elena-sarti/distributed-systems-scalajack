@@ -2,11 +2,10 @@ package server.replication
 
 import server.liveness.{FailureDetector, Peer}
 
-/** What the primary does at every period to keep its backup informed and to know if it is alive: sends it a
- * heartbeat and, if the backup answers, tells the detector. `tick` must be called by one thread at a time (see
- * `PeriodicTask`).
+/** Sends a heartbeat to the backup at every period and, if the backup answers, tells the detector.
+ * `tick` must be called by one thread at a time (see [[server.PeriodicTask]]).
  *
- * @param epoch the epoch of this primary, sent in every heartbeat. Read at every tick: it grows when the primary
+ * @param epoch the epoch of this primary, sent in every heartbeat and read at every tick since it grows when the primary
  *              goes on without its backup.
  */
 final class BackupHeartbeatSender(backup: BackupHeartbeats, epoch: => Long, detector: FailureDetector[Peer]):

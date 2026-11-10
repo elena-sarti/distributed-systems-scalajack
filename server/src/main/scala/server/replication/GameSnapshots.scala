@@ -19,8 +19,7 @@ object GameSnapshots:
     case card: StandardCard => Some(card)
     case _                  => None // the cut card
 
-  /** The game described by the snapshot. Players and bets refer to the same objects, as in a game played
-   * from the start (the table finds the players of its seats among them by name). */
+  /** The game described by the snapshot. Players and bets refer to the same objects, as in a game played from the start. */
   def rebuild(snapshot: TableSnapshot): Game =
     val players = snapshot.hands.map(player)
     val byName  = players.map(p => p.name -> p).toMap
