@@ -56,6 +56,10 @@ cmake-build-*/
 # IntelliJ
 out/
 
+#Docker / ambiente locale
+.env
+docker-compose.override.yml
+
 # mpeltonen/sbt-idea plugin
 .idea_modules/
 

@@ -15,10 +15,26 @@ In order to run the game, download the `.jar` file from the [latest release](../
 java -jar pps-scalajack.jar
 ```
 
+## Playing online
+Start the server with Docker (`docker compose up --build`), then run the client from the root of the repository and follow the prompts (register, log in, sit at a table, play):
+```bash
+sbt client/run                                  # the lobby of the Docker deployment, http://localhost:9080
+sbt "client/run http://another-host:9080"       # another lobby
+```
+On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards. Every player runs their own client. The local game of the first version is still there: `sbt "client/runMain controller.GameController"`.
+
+## Failure demo
+The failures described in the [decision record](DECISION_RECORD.md) can be played on the Docker deployment. Build the image once, then run the scenarios from the root of the repository:
+```bash
+docker compose build
+sbt "demo/run"           # every scenario
+sbt "demo/run crash"     # only one of them: crash, partition or backup
+```
+Each scenario starts the deployment afresh, sends a player to the table, kills a node or cuts it off the network, and prints what it observes.
+
 ## Documentation
 The project documentation is visible at [(./docs/report)](https://nicoforlivesi.github.io/PPS-26-scalajack/).
 
 ## Authors
 [Nicholas Forlivesi](https://github.com/NicoForlivesi)<br>
-[Anna Malagoli](https://github.com/AnnaM08)<br>
 [Elena Sarti](https://github.com/elena-sarti)

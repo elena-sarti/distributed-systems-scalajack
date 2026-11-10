@@ -1,0 +1,182 @@
+x-backend: &backend
+  image: scalajack-backend
+  pull_policy: never   # the image is built locally, never downloaded
+
+# What the lobby and the tables have in common: the database (the users and their balances) and the
+# secret that signs the session tokens. Written once, so the nodes cannot end up with different values.
+x-node-environment: &node-environment
+  # "db" is the name of the service: Compose resolves it. The timeouts keep a node from waiting forever
+  # for a database that does not answer.
+  DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}?connectTimeout=5&socketTimeout=10
+  DB_USER: ${POSTGRES_USER:-scalajack}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  # the default is only for local runs: a real deployment sets its own SESSION_SECRET in .env
+  SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
+
+# What every table node has in common. The tables differ only in their name and in the ports published
+# for the clients, which are given where each table is declared.
+x-table-environment: &table-environment
+  <<: *node-environment
+  NODE_ROLE: table
+  LOBBY_URL: http://lobby:8080   # where the table announces itself and sends its heartbeats
+  TABLE_HOST: localhost          # the clients are outside Docker: they reach a table on the published port
+  HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+  # a peer (lobby or backup) is suspected after this many seconds of silence: the same rule as the lobby's
+  HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
+
+# What every backup has in common: it is a copy of its table, and the node that takes the table's place if the table
+# fails. Its name is the one of its table followed by "-backup": the lobby relies on it to start the two together.
+x-backup-environment: &backup-environment
+  <<: *node-environment
+  NODE_ROLE: backup
+  LOBBY_URL: http://lobby:8080   # where it sends its heartbeats
+  HEARTBEAT_PERIOD_SECONDS: ${HEARTBEAT_PERIOD_SECONDS:-2}
+  HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}   # after this it suspects its primary
+  # if it becomes the primary it is a table: the address it announces to the lobby for the clients (F4)
+  TABLE_HOST: localhost
+  # after a take over, how long the players of the failed primary have to come back to their seats (F7)
+  RETURN_WINDOW_SECONDS: ${RETURN_WINDOW_SECONDS:-30}
+
+x-backup-depends: &backup-depends
+  db:   # after the promotion it keeps the balances of the players in the database
+    condition: service_healthy
+
+x-table-depends: &table-depends
+  db:               # the balances are in the database
+    condition: service_healthy
+  lobby:            # it can start before the lobby is ready anyway (it retries), but this avoids useless attempts
+    condition: service_started
+
+# The lobby starts more tables when all are full, up to the three below. `docker compose up` starts only
+# table-1; table-2 and table-3 belong to the profile "pool", so they are not started by it. They must
+# exist, though, for the lobby to start them: create them once, without starting them, with
+#   docker compose --profile pool up --no-start
+# Every table has its backup, which the lobby starts together with the table.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scalajack}
+      POSTGRES_USER: ${POSTGRES_USER:-scalajack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  lobby:
+    <<: *backend
+    build: . # the only service that builds the image
+    environment:
+      <<: *node-environment
+      NODE_ROLE: lobby
+      # a table is marked unavailable after this many seconds without a heartbeat (default 6: 3 missed beats)
+      HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS:-6}
+      # the tables the lobby may start, in this order: their number is the maximum number of tables
+      TABLE_POOL: table-1,table-2,table-3
+    ports:
+      - "9080:8080"
+    volumes:
+      # the lobby starts the tables through the Docker daemon. This gives it wide control of Docker on the
+      # host: acceptable to simulate the nodes on one machine, not for a real deployment.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+
+  table-1:
+    <<: *backend
+    container_name: table-1   # the lobby starts a table by the name of its container, which is its TABLE_ID
+    environment:
+      <<: *table-environment
+      TABLE_ID: table-1   # marks in the database the players sitting here: it must not change between restarts
+      TABLE_PUBLIC_WS_PORT: "9091"   # the address the clients are given: the published port (below)
+      BACKUP_URL: http://table-1-backup:8080   # every change of the table is stored there before the players see it
+    ports:
+      - "9081:8080"   # health (HTTP)
+      - "9091:8090"   # WebSocket
+    depends_on:
+      <<: *table-depends
+      table-1-backup:   # without its backup the table cannot accept any move
+        condition: service_started
+
+  # The copy of table-1: it keeps the last state of the table and takes no players. It has the same
+  # environment as the other nodes, so that it can take the place of the table.
+  table-1-backup:
+    <<: *backend
+    container_name: table-1-backup
+    environment:
+      <<: *backup-environment
+      TABLE_ID: table-1   # the table it protects: the lobby identifies its heartbeats by it
+      TABLE_PUBLIC_WS_PORT: "9191"
+    ports:
+      - "9181:8080"   # health and replication (HTTP)
+      - "9191:8090"   # WebSocket, used only after the promotion
+    depends_on: *backup-depends
+
+  table-2:
+    <<: *backend
+    container_name: table-2
+    profiles: ["pool"]
+    environment:
+      <<: *table-environment
+      TABLE_ID: table-2
+      TABLE_PUBLIC_WS_PORT: "9092"
+      BACKUP_URL: http://table-2-backup:8080
+    ports:
+      - "9082:8080"
+      - "9092:8090"
+    depends_on:
+      <<: *table-depends
+      table-2-backup:
+        condition: service_started
+
+  table-2-backup:
+    <<: *backend
+    container_name: table-2-backup
+    profiles: ["pool"]
+    environment:
+      <<: *backup-environment
+      TABLE_ID: table-2
+      TABLE_PUBLIC_WS_PORT: "9192"
+    ports:
+      - "9182:8080"
+      - "9192:8090"
+    depends_on: *backup-depends
+
+  table-3:
+    <<: *backend
+    container_name: table-3
+    profiles: ["pool"]
+    environment:
+      <<: *table-environment
+      TABLE_ID: table-3
+      TABLE_PUBLIC_WS_PORT: "9093"
+      BACKUP_URL: http://table-3-backup:8080
+    ports:
+      - "9083:8080"
+      - "9093:8090"
+    depends_on:
+      <<: *table-depends
+      table-3-backup:
+        condition: service_started
+
+  table-3-backup:
+    <<: *backend
+    container_name: table-3-backup
+    profiles: ["pool"]
+    environment:
+      <<: *backup-environment
+      TABLE_ID: table-3
+      TABLE_PUBLIC_WS_PORT: "9193"
+    ports:
+      - "9183:8080"
+      - "9193:8090"
+    depends_on: *backup-depends
+
+volumes:
+  db-data:
