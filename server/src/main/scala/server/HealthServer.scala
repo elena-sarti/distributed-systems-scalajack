@@ -4,8 +4,8 @@ import com.sun.net.httpserver.{HttpHandler, HttpServer}
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
 
-/** The HTTP server of a node, based on the JDK's built-in HTTP server (no extra dependencies).
- * Every node answers `/health`; a node may add the routes of its role (e.g. `/register` on the lobby).
+/** The HTTP server of a node, based on the one built into the JDK. Every node answers `/health` and may add the routes
+ * of its role.
  *
  * @param routes the extra paths served by this node, with their handlers.
  */

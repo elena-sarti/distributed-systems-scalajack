@@ -12,17 +12,15 @@ trait Cashier:
   def standUp(username: String, balance: Double): Unit
 
 object Cashier:
-  /** Everybody sits down with the same balance and nothing is kept: a table without a database. */
+  /** Everybody sits down with the same balance and nothing is kept. */
   def withoutMemory(balance: Double): Cashier = new Cashier:
     def sitDown(username: String): Either[String, Double] = Right(balance)
     def standUp(username: String, balance: Double): Unit  = ()
 
-/** The balances kept in the database: a player sits at one table at a time, and finds at the next
- * table (and at the next login) the balance they had when they left this one.
- *
- * It is called by the single writer of the table, so a slow database slows the table down: the JDBC url
- * sets timeouts, and an error never reaches the table, it only becomes a refusal or a line in the log.
- */
+/** The balances kept in the database: a player finds at the next table, and at the next login, the balance they had when
+ * they left.
+ * It is called by the single writer, so a slow database slows the table down. Errors only become a refusal or a line in
+ * the log. */
 final class DatabaseCashier(balances: BalanceRepository, tableId: String) extends Cashier:
   import DatabaseCashier.*
 
@@ -39,7 +37,7 @@ final class DatabaseCashier(balances: BalanceRepository, tableId: String) extend
       if !balances.standUp(username, tableId, balance) then
         System.err.println(s"The balance of $username was not saved: not sitting at $tableId")
     catch case NonFatal(error) =>
-      // the user stays marked at this table until it starts again (see BalanceRepository.releaseTable)
+      // the user stays marked at this table until it starts again
       System.err.println(s"Cannot save the balance of $username: ${error.getMessage}")
 
 object DatabaseCashier:

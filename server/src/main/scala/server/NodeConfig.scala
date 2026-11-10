@@ -3,18 +3,21 @@ package server
 import server.lobby.TableProvisioner
 import java.time.Duration
 
-/** @param tableId   the name of the table run by a table node: it marks the players sitting there in the
- *                  database, so it must stay the same when the node starts again.
- * @param lobbyUrl  where a table node finds the lobby; without it the node does not announce itself.
- * @param publicHost the address clients use to reach a table node (not always the one the node sees).
- * @param publicWsPort the WebSocket port clients use, if it is not the node's own (e.g. a port published by Docker).
- * @param heartbeat how often the tables say they are alive and how long the lobby waits for them.
- * @param tablePool the ids of the tables the lobby may start, in the order it starts them: how many they are
- *                  is the maximum number of tables. Used by the lobby.
+/** The configuration of a node, read from the environment.
+ *
+ * @param role         the role of the node.
+ * @param port         the port of the HTTP server.
+ * @param wsPort       the WebSocket port of a table node.
+ * @param tableId      the name of the table run by a table node. It marks the players seated there in the database,
+ *                     so it must not change when the node restarts.
+ * @param lobbyUrl     the address of the lobby. Without it a table node does not announce itself.
+ * @param publicHost   the address the clients use to reach a table node.
+ * @param publicWsPort the WebSocket port the clients use, if it differs from the one of the node.
+ * @param heartbeat    how often the nodes say they are alive and how long the others wait for them.
+ * @param tablePool    the ids of the tables the lobby may start, in order. Their number is the maximum number of tables.
  * @param dockerSocket the Unix socket of the Docker daemon, used by the lobby to start the tables.
- * @param backupUrl where a table node finds its backup; without it the table is not replicated.
- * @param returnWindow how long a backup that takes over its table waits for the players of the failed primary to
- *                     come back to their seats.
+ * @param backupUrl    the address of the backup of a table node. Without it the table is not replicated.
+ * @param returnWindow how long a backup that takes over waits for the players of the failed primary to return.
  */
 final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.DefaultWsPort,
                             tableId: String = NodeConfig.DefaultTableId,
@@ -29,8 +32,8 @@ final case class NodeConfig(role: NodeRole, port: Int, wsPort: Int = NodeConfig.
   /** The WebSocket port to hand out to the clients. */
   def advertisedWsPort: Int = publicWsPort.getOrElse(wsPort)
 
-/** Times of the heartbeats. Lobby and tables must agree: the timeout is a few periods, so that one lost
- * heartbeat does not make a table unavailable. */
+/** The period of the heartbeats and the timeout after which a silent node is suspected.
+ * The timeout spans a few periods, so a single lost heartbeat is tolerated. Lobby and tables must use the same values. */
 final case class HeartbeatConfig(period: Duration, timeout: Duration)
 
 object HeartbeatConfig:
@@ -55,7 +58,7 @@ object NodeConfig:
   val DefaultDockerSocket = "/var/run/docker.sock"
   val DefaultReturnWindow: Duration = Duration.ofSeconds(30)
 
-  /** Pure function: takes the environment as a parameter, so it is trivially testable. */
+  /** Reads the configuration from the given environment, which is a parameter so that it can be tested. */
   def fromEnv(env: Map[String, String]): Either[String, NodeConfig] =
     for
       rawRole <- env.get("NODE_ROLE").toRight("NODE_ROLE is not set")
@@ -81,14 +84,14 @@ object NodeConfig:
     env.get(name).fold(Right(default)): s =>
       s.toIntOption.filter(p => p >= 1 && p <= 65535).toRight(s"Invalid $name '$s'")
 
-  /** Absent is fine (e.g. the node just does not announce itself); present, it must be an http(s) address. */
+  /** An absent url is accepted. A present one must be an http(s) address. */
   private def parseUrl(name: String, env: Map[String, String]): Either[String, Option[String]] =
     env.get(name).fold(Right(None)): raw =>
       val url = raw.trim
       Either.cond(url.startsWith("http://") || url.startsWith("https://"), Some(url), s"Invalid $name '$raw'")
 
-  /** A comma separated list of table ids. Absent means none; an empty item or a repetition is almost surely
-   * a typo, and a wrong pool would only show when the lobby tries to start a node, so it is refused now. */
+  /** A comma separated list of table ids: absent means none.
+   * An empty item or a repetition is refused now, since a wrong pool would only show when the lobby starts a node. */
   private def parsePool(env: Map[String, String]): Either[String, Seq[String]] =
     env.get("TABLE_POOL").fold[Either[String, Seq[String]]](Right(Seq.empty)): raw =>
       val ids = raw.split(",", -1).toSeq.map(_.trim)

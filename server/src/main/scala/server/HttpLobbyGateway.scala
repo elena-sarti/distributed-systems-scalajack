@@ -10,11 +10,11 @@ import scala.util.control.NonFatal
 
 /** The lobby reached over its HTTP API.
  *
- * @param baseUrl the address of the lobby, e.g. `http://lobby:8080`.
- * @param timeout how long to wait to connect and to get an answer: a lobby that does not answer must not
- *                block the table's heartbeat thread for long.
- * @param epoch   the epoch of the table, sent with its registration and heartbeats; read at every call, since it
- *                grows. `None` for a table that is not replicated.
+ * @param baseUrl the address of the lobby.
+ * @param timeout how long to wait to connect and to get an answer, so that a silent lobby does not block the heartbeat
+ *                thread for long.
+ * @param epoch   the epoch of the table, sent with its registration and heartbeats and read at every call since it
+ *                grows. None for a table that is not replicated.
  */
 final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSeconds(2), epoch: () => Option[Long] = () => None)
   extends LobbyGateway, PromotionGateway, ExclusionGateway, StartGateway:
@@ -50,17 +50,17 @@ final class HttpLobbyGateway(baseUrl: String, timeout: Duration = Duration.ofSec
     case Some(code) => PromotionAnswer.Denied(code)
     case None       => PromotionAnswer.Unreachable
 
-  /** What the status of a heartbeat's answer means for the node (shared by the two kinds of heartbeat). */
+  /** What the status of the answer to a heartbeat means for the node, for both kinds of heartbeat. */
   private def toResult(status: Option[Int]): HeartbeatResult = status match
     case Some(200) => HeartbeatResult.Acknowledged
     case Some(404) => HeartbeatResult.UnknownTable
     case Some(409) => HeartbeatResult.Superseded
     case _         => HeartbeatResult.Unreachable
 
-  /** The status of the answer, or `None` if there was no answer (connection refused, timeout...). */
+  /** The status of the answer, or None if there was none. */
   private def post[T: ReadWriter](path: String, body: T): Option[Int] = send(path, body).map(_._1)
 
-  /** Status and body of the answer, or `None` if there was no answer. */
+  /** Status and body of the answer, or None if there was no answer. */
   private def send[T: ReadWriter](path: String, body: T): Option[(Int, String)] =
     try
       val request = HttpRequest.newBuilder(URI.create(baseUrl.stripSuffix("/") + path))

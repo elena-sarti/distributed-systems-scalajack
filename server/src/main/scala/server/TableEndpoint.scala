@@ -12,16 +12,13 @@ import java.net.InetSocketAddress
 import java.util.UUID
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, TimeUnit}
 
-/** WebSocket transport of a table node: accepts connections, turns every text frame into a
- * [[protocol.ClientMessage]] and hands it to the [[SessionHandler]]. It knows nothing about the game.
+/** WebSocket transport of a table node. It turns every text frame into a [[protocol.ClientMessage]] for the
+ * [[SessionHandler]] and knows nothing about the game. The opening handshake must carry `Authorization: Bearer <token>`
+ * with a valid session token, and the connection speaks for that user only.
  *
- * Only logged-in users get in: the opening handshake must carry `Authorization: Bearer <token>` with a
- * session token issued by the lobby, otherwise the connection is refused before it is opened. Each
- * connection then speaks for that user only, so a client cannot sit down under somebody else's name.
- *
- * @param port    the port to listen on (0 = a free port chosen by the OS, see [[boundPort]]).
+ * @param port    the port to listen on, or 0 for a free port chosen by the OS.
  * @param handler the table logic that reacts to connections and messages.
- * @param tokens  checks the session tokens (with the secret shared with the lobby).
+ * @param tokens  checks the session tokens.
  */
 final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTokens):
   import TableEndpoint.*
@@ -31,7 +28,7 @@ final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTok
   @volatile private var startupError: Option[Exception] = None
   private val server = Server()
 
-  /** Starts listening; returns when the endpoint is ready, throws if it cannot start (ex. port in use). */
+  /** Starts listening and returns when the endpoint is ready. Throws if it cannot start. */
   def start(): Unit =
     server.start()
     val signalled = started.await(StartTimeoutSeconds, TimeUnit.SECONDS)
@@ -43,11 +40,8 @@ final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTok
   /** Closes every connection and releases the port. Calling it twice is harmless. */
   def stop(): Unit = server.stop(StopTimeoutMillis)
 
-  /** While the endpoint is stopping, the library interrupts its own thread just before calling
-   * onClose for the last connection. An interrupted thread makes blocking calls (queue.put)
-   * throw, which would silently lose the notification: the flag is cleared during the callback
-   * and restored afterwards, so the library still shuts down as it expects.
-   */
+  /** Tells the handler that a connection is closed. The interrupt flag set by the library while stopping is cleared during
+   * the callback and restored afterward, so the notification is not lost. */
   private def notifyDisconnected(connection: Connection): Unit =
     val wasInterrupted = Thread.interrupted() // reads and clears the flag
     try handler.onDisconnected(connection)
@@ -59,8 +53,8 @@ final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTok
 
     override def onStart(): Unit = started.countDown()
 
-    /** Runs before the connection is opened: without a valid token the handshake fails and the
-     * handler never hears of the client. The user is remembered on the socket for [[onOpen]]. */
+    /** Runs before the connection is opened. Without a valid token the handshake fails and the handler never hears of the
+     * client. The user is kept on the socket for [[onOpen]]. */
     override def onWebsocketHandshakeReceivedAsServer(socket: WebSocket, draft: Draft,
                                                       request: ClientHandshake): ServerHandshakeBuilder =
       val user = bearerToken(request.getFieldValue("Authorization")).flatMap(tokens.verify)
@@ -78,8 +72,8 @@ final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTok
         MessageCodec.decodeClientMessage(text) match
           case Right(ClientMessage.JoinTable(name)) if name != connection.user =>
             connection.send(ServerMessage.JoinRejected(NotYourName))
-          case Right(message) => handler.onMessage(connection, message)
-          case Left(reason)   => connection.send(ServerMessage.ErrorMessage(reason))
+          case Right(message)                                                  => handler.onMessage(connection, message)
+          case Left(reason)                                                    => connection.send(ServerMessage.ErrorMessage(reason))
 
     override def onClose(socket: WebSocket, code: Int, reason: String, remote: Boolean): Unit =
       // removed before the handler is told: a closed connection is never counted again
@@ -101,7 +95,10 @@ object TableEndpoint:
   private def bearerToken(header: String): Option[String] =
     Option(header).map(_.trim).filter(_.startsWith("Bearer ")).map(_.stripPrefix("Bearer ").trim).filter(_.nonEmpty)
 
-  /** @param user the logged-in user the connection speaks for. */
+  /** A connection over a WebSocket.
+   *
+   * @param user the logged-in user the connection speaks for.
+   */
   private final class WsConnection(socket: WebSocket, val user: String) extends Connection:
     val id: String = UUID.randomUUID().toString
     def send(message: ServerMessage): Unit =
