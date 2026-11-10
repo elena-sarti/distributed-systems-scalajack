@@ -8,18 +8,15 @@ import java.math.BigDecimal as JBigDecimal
 enum FundsRefusal:
   /** The amount is not a positive number of fiches within the limits (see [[FundsService.isAmountValid]]). */
   case InvalidAmount
+  /** The user does not exist. */
   case UnknownUser
   /** The player is sitting at a table, which holds their money until they stand up. */
   case SeatedAtTable
   /** The balance is lower than the amount to withdraw. */
   case InsufficientFunds
 
-/** The money of the players while they are in the lobby: reads the balance, deposits, withdraws.
- *
- * It checks the amount, and leaves to the repository what must be atomic (the player is not sitting, the balance
- * never goes below zero). Stateless, so thread-safe. There is no real payment behind it: the game is played with
- * fiches, and a deposit just creates them.
- */
+/** The money of the players while they are in the lobby, with balance, deposit and withdrawal. It checks the amount and
+ * leaves to the repository what must be atomic. It is stateless and uses fiches, so a deposit just creates them. */
 final class FundsService(balances: BalanceRepository):
   import FundsService.*
 
@@ -32,7 +29,7 @@ final class FundsService(balances: BalanceRepository):
   def withdraw(username: String, amount: Double): Either[FundsRefusal, Double] =
     validated(amount).flatMap(balances.withdraw(username, _).left.map(refusal))
 
-  /** Whether the player has the money to sit at a table: at least the minimum bet, the same rule the table applies. */
+  /** Whether the player has at least the minimum bet, as the table requires to sit down. */
   def canPlay(username: String): Boolean = balances.balanceOf(username).exists(_ >= Game.MinGameBet)
 
   private def validated(amount: Double): Either[FundsRefusal, Double] =
@@ -44,9 +41,9 @@ final class FundsService(balances: BalanceRepository):
     case FundsError.InsufficientFunds => FundsRefusal.InsufficientFunds
 
 object FundsService:
-  /** The most that can be moved at once: far from what the `balance` column (NUMERIC(12, 2)) can hold. */
+  /** The most that can be moved at once, well below what the `balance` column can hold. */
   val MaxAmount = 1_000_000.0
 
-  /** A finite, positive amount with at most two decimals (the cents of the column) and not above [[MaxAmount]]. */
+  /** Whether the amount is finite, positive, with at most two decimals and not above [[MaxAmount]]. */
   def isAmountValid(amount: Double): Boolean =
     amount.isFinite && amount > 0 && amount <= MaxAmount && JBigDecimal.valueOf(amount).scale <= 2
