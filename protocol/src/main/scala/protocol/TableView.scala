@@ -21,8 +21,8 @@ final case class PlayerView(name: String,
 
 /** What every client can see about the dealer.
  *
- * Face-down cards are *not* included: only how many there are. This way the hidden card
- * never leaves the table node, so it cannot be read by sniffing the network traffic.
+ * Face-down cards are not included: the hidden card
+ * never leaves the table node thus it cannot be read by sniffing the network traffic.
  *
  * @param visibleCards the face-up cards of the dealer.
  * @param hiddenCards  how many face-down cards the dealer holds.

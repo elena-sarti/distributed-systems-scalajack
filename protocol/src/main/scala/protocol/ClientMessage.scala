@@ -2,10 +2,8 @@ package protocol
 
 import upickle.default.ReadWriter
 
-/** Messages that a client (the player's terminal) sends to a table node.
+/** Messages that a client sends to a table node.
  *
- * The client never changes the game state by itself: every message is a *request*
- * that the table node (the only authority on the game state) validates and applies.
  * `derives ReadWriter` asks upickle to generate the JSON (de)serializer at compile time.
  */
 enum ClientMessage derives ReadWriter:
@@ -18,7 +16,7 @@ enum ClientMessage derives ReadWriter:
 
   /** Answer to a [[ServerMessage.BetRequest]]: the amount the player wants to bet for this hand.
    *
-   * @param amount the amount of the bet (same unit as the model's `Bet.amount`).
+   * @param amount the amount of the bet.
    */
   case PlaceBet(amount: Int)
 

@@ -2,21 +2,20 @@ package protocol
 
 import upickle.default.ReadWriter
 
-/** The decisions of a player that the table waits for, and that it takes by itself when the time is up. */
+/** The decisions of a player that the table waits for and that it takes by itself when the time is up. */
 enum Decision derives ReadWriter:
- /** The bet for the next hand: a player who is late sits out the hand. */
+ /** The bet for the next hand. */
   case Bet
-   /** The answer to the insurance offer: a player who is late declines it. */
+   /** The answer to the insurance offer. */
   case Insurance
-  /** The action of a hand (hit, stand, ...): the table plays the hand of a late player (a card while it is worth less
-   * than 12, then it stands). */
+  /** The action of a hand. */
   case Action
 
 /** Messages that a table node sends to its clients.
  *
  * They are of two kinds:
- *  - *requests* addressed to a single client, asking for a decision (bet, insurance, action);
- *  - *notifications* describing what happened at the table (state updates, results, errors).
+ *  - requests addressed to a single client, asking for a decision (bet, insurance, action);
+ *  - notifications describing what happened at the table (state updates, results, errors).
  */
 enum ServerMessage derives ReadWriter:
 
@@ -27,14 +26,14 @@ enum ServerMessage derives ReadWriter:
    */
   case JoinAccepted(playerName: String, balance: Double)
 
-  /** The player could not be seated (e.g. the table is full or the name is already taken).
+  /** The player could not be seated.
    *
-   * @param reason a human readable explanation.
+   * @param reason a human-readable explanation.
    */
   case JoinRejected(reason: String)
 
-  /** How long the player has to answer the request that follows (a bet, the insurance, an action): when the time is
-   * over the table decides for them. A number of seconds from now, not a time of day, so that the client can count
+  /** How long the player has to answer the request that follows: when the time is
+   * over the table decides for them. A number of seconds from now so that the client can count
    * down with its own clock: the clocks of the client and of the table node never have to agree.
    *
    * @param seconds the seconds left, rounded up.
@@ -48,8 +47,7 @@ enum ServerMessage derives ReadWriter:
    */
   case BetRequest(balance: Double, minBet: Int)
 
-  /** The dealer shows an ace: asks the player whether to buy the insurance;
-   * the client answers with an `AnswerInsurance`. */
+  /** The dealer shows an ace, so it asks the player whether to buy the insurance. */
   case InsuranceOffer
 
   /** It is the turn of one of the player's hands: asks which action to take.

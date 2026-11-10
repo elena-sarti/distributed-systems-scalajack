@@ -10,7 +10,7 @@ import utils.ModelExports.{PlayerState, StandardCard, Suit, Value}
  */
 object ModelCodecs:
 
-  // Simple enums (only singleton cases) are written as the plain name of the case, e.g. "Hearts".
+  // Simple enums (only singleton cases) are written as the plain name of the case("Hearts").
   // `bimap` adapts the String serializer: toString on the way out, valueOf on the way in.
   // An unknown name makes valueOf throw, which MessageCodec turns into a Left (malformed message).
   given ReadWriter[Suit]        = readwriter[String].bimap[Suit](_.toString, Suit.valueOf)
