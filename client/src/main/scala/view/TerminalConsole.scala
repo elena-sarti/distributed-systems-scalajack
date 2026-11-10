@@ -7,8 +7,7 @@ import java.io.{BufferedReader, EOFException, InputStreamReader}
 import java.nio.charset.Charset
 
 /** The terminal of the online game. The keyboard is read by a thread of its own, and every line goes into a queue:
- * so waiting for the player's answer can be cancelled, which a read from the keyboard cannot. The client needs it
- * because the table does not wait: when the time to answer is over, the question on the screen is withdrawn. */
+ * waiting for the player's answer can be cancelled, while a read from the keyboard cannot. */
 final class TerminalConsole private (lines: Queue[IO, Option[String]]) extends Console[IO]:
   private val screen = Console.make[IO]
 
@@ -18,7 +17,7 @@ final class TerminalConsole private (lines: Queue[IO, Option[String]]) extends C
 
   def readLineWithCharset(charset: Charset): IO[String] = readLine
 
-  /** Forgets what was typed before the question that is now on the screen: it answered nothing that is still asked. */
+  /** Forgets what was typed before the question that is now on the screen. */
   def discardTypedAhead: IO[Unit] = lines.tryTakeN(None).flatMap(old => IO.whenA(old.contains(None))(lines.offer(None)))
 
   /** Flushed at once: an unfinished line, such as the time left rewritten in place, must show too. */
@@ -43,7 +42,7 @@ object TerminalConsole:
       try
         Iterator.continually(keyboard.readLine()).takeWhile(_ != null).foreach(line => dispatcher.unsafeRunSync(lines.offer(Some(line))))
         dispatcher.unsafeRunSync(lines.offer(None))
-      catch case _: Exception => () // the program is closing: nobody reads any more
+      catch case _: Exception => () //the program is closing: nobody reads anymore
     , "keyboard")
     reader.setDaemon(true)
     reader.start()

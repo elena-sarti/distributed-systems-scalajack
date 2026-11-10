@@ -7,24 +7,20 @@ import protocol.ServerMessage.{JoinAccepted, JoinRejected}
 import java.net.URI
 import scala.concurrent.duration.*
 
-/** The player is back in the seat they had: the connection with the node that plays the table now, and their balance.
- * The table sends right after what it is waiting for from the player, if anything, so the hand goes on. */
+/** The player is back in the seat they had, the hand goes on. */
 final case class Reseated(connection: ServerConnection, balance: Double)
 
-/** The seat cannot be taken back: the lobby says that the player sits nowhere, or the table refuses them (e.g. they came
- * back too late and the seat has been given up). A new seat must be asked for. */
+/** The seat cannot be taken back: a new seat must be asked for. */
 final class SeatLostException(reason: String) extends RuntimeException(reason)
 
 /** The table could not be reached again within the time allowed. */
 final class ReconnectionFailedException(reason: String) extends RuntimeException(reason)
 
-/** What a client does when it loses the connection with its table, e.g. because the node failed and the backup took
- * its place: it asks the lobby where the table is now, connects there with the same session token and sits down again
- * with the same name, which gives it back its seat (the client does not need to know that a failover happened).
+/** What a client does when it loses the connection with its table: it asks the lobby where the table is now,
+ * connects there with the same session token and sits down again with the same name.
  *
  * While the table is not reachable (the backup is still taking over, the lobby or the node do not answer yet) it
- * tries again every `retryEvery`, until `giveUpAfter`.
- */
+ * tries again every retryEvery, until giveUpAfter. */
 object TableReconnection:
   private val AnswerTimeout = 5.seconds
 
@@ -37,13 +33,13 @@ object TableReconnection:
 
     def attempt(deadline: FiniteDuration): Resource[IO, Reseated] =
       Resource.eval(lobby.locate(token)).flatMap:
-        case LocateAnswer.Found(address) =>
+        case LocateAnswer.Found(address)                             =>
           sitAgain(address).attempt.flatMap:
             case Right(reseated)               => Resource.pure(reseated)
             case Left(lost: SeatLostException) => Resource.raiseError[IO, Reseated, Throwable](lost)
             case Left(_)                       => retry(deadline) // the node is not ready yet, or the connection dropped
-        case LocateAnswer.NotSeated       => Resource.raiseError[IO, Reseated, Throwable](SeatLostException("You are not seated at any table"))
-        case LocateAnswer.Refused(status) => Resource.raiseError[IO, Reseated, Throwable](ReconnectionFailedException(s"The lobby refused the request ($status)"))
+        case LocateAnswer.NotSeated                                  => Resource.raiseError[IO, Reseated, Throwable](SeatLostException("You are not seated at any table"))
+        case LocateAnswer.Refused(status)                            => Resource.raiseError[IO, Reseated, Throwable](ReconnectionFailedException(s"The lobby refused the request ($status)"))
         case LocateAnswer.NotReachableYet | LocateAnswer.Unreachable => retry(deadline)
 
     def retry(deadline: FiniteDuration): Resource[IO, Reseated] =

@@ -10,13 +10,13 @@ import java.time.Duration as JDuration
 
 /** What the lobby says about the table of a player who lost the connection with it. */
 enum LocateAnswer:
-  /** The table is played at this address now (by the node it had before, or by the backup that took its place). */
+  /** The table is played at this address now. */
   case Found(address: TableAddress)
-  /** The player sits at no table any more: the seat has been given up. */
+  /** The player does not sit at the table anymore: the seat has been freed. */
   case NotSeated
-  /** The table is not reachable yet, e.g. its backup is still taking over: ask again in a moment. */
+  /** The table is not reachable yet (its backup is still taking over), so ask again in a moment. */
   case NotReachableYet
-  /** The lobby refuses the request (e.g. an expired token, 401): asking again does not help. */
+  /** The lobby refuses the request so asking again does not help. */
   case Refused(status: Int)
   /** No answer from the lobby. */
   case Unreachable
@@ -47,15 +47,15 @@ trait LobbyConnection:
   /** The money of the player, or why it cannot be told. Only the lobby knows it while the player is not at a table. */
   def balance(token: String): IO[Either[String, Double]]
 
-  /** Adds `amount` fiches to the balance of the player: the new balance, or why the lobby refused. */
+  /** Adds "amount" fiches to the balance of the player: the new balance, or why the lobby refused. */
   def deposit(token: String, amount: Double): IO[Either[String, Double]]
 
-  /** Takes `amount` fiches from the balance of the player: the new balance, or why the lobby refused. */
+  /** Takes "amount" fiches from the balance of the player: the new balance, or why the lobby refused. */
   def withdraw(token: String, amount: Double): IO[Either[String, Double]]
 
 /** The lobby reached over its HTTP API, with the JDK's client.
  *
- * @param baseUrl the address of the lobby, e.g. `http://localhost:9080`. */
+ * @param baseUrl the address of the lobby. */
 final class HttpLobbyConnection(baseUrl: String) extends LobbyConnection:
   import HttpLobbyConnection.*
 
@@ -101,7 +101,7 @@ final class HttpLobbyConnection(baseUrl: String) extends LobbyConnection:
       case Some((_, answer))   => Left(reasonIn(answer))
       case None                => Left(Unreachable)
 
-  /** Status and body of the answer, or `None` if the lobby did not answer. */
+  /** Status and body of the answer, or None if the lobby did not answer. */
   private def post[T: ReadWriter](path: String, body: T): IO[Option[(Int, String)]] =
     val request = HttpRequest.newBuilder(URI.create(baseUrl.stripSuffix("/") + path)).timeout(Timeout)
       .header("Content-Type", "application/json")

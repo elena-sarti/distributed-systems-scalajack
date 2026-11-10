@@ -13,21 +13,21 @@ enum ConnectionEvent:
   case Received(message: ServerMessage)
   /** A frame that is not a valid [[ServerMessage]]: reported, never thrown, as network data is untrusted. */
   case Invalid(reason: String)
-  /** The connection is over (closed by the server, or lost). Nothing will follow. */
+  /** The connection is over. Nothing will follow. */
   case Disconnected(reason: String)
 
 /** Raised by [[ServerConnection.send]] when the connection is already over. */
 final class ConnectionClosedException extends RuntimeException("The connection with the table is closed")
 
-/** The client's view of the network: write requests, read what the table says.
+/** The client's view of the network.
  *
  * It hides the transport, so the controller never depends on WebSocket.
- * Both operations are asynchronous: an `IO` is only a description of the operation,
+ * Both operations are asynchronous: an IO is only a description of the operation,
  * and while it waits for the network no thread is blocked.
  */
 trait ServerConnection:
 
-  /** Sends a request to the table. The `IO` completes when the message has been handed
+  /** Sends a request to the table. The IO completes when the message has been handed
    * over for sending, not when the server has processed it: the answer arrives via [[receive]].
    *
    * Fails with [[ConnectionClosedException]] if the connection is over. */

@@ -15,27 +15,26 @@ object WebSocketConnection:
   private val ConnectTimeout = JDuration.ofSeconds(5)
   private val CloseTimeout   = 2.seconds
 
-  /** The connection lives as long as the [[Resource]] is in use and is always closed afterwards.
+  /** The connection lives as long as the [[Resource]] is in use and is always closed afterward.
    *
-   * @param token the session token given by the lobby: the tables accept only the clients that show one, in the
-   *              `Authorization` header of the handshake. */
+   * @param token the session token given by the lobby: the tables accept only the clients that show one */
   def connect(uri: URI, token: Option[String] = None): Resource[IO, ServerConnection] =
     for
-      // Bridge between the JDK threads (callbacks) and cats-effect: it runs the effects
+      // Bridge between the callbacks and cats-effect: it runs the effects
       // submitted by the callbacks one at a time and in order, so messages are not reordered.
       dispatcher <- Dispatcher.sequential[IO]
-      // Where the callbacks put what happens on the connection and `receive` takes it from.
+      // Where the callbacks put what happens on the connection and receive takes it from.
       events     <- Resource.eval(Queue.unbounded[IO, ConnectionEvent])
       // Completed once, when the connection is over: lets `send` fail fast and `close` wait for the handshake.
       closed     <- Resource.eval(Deferred[IO, Unit])
-      // One permit: only one send at a time (the JDK forbids overlapping sends).
+      // One permit: only one send at a time.
       writer     <- Resource.eval(Semaphore[IO](1))
       listener    = EventListener(dispatcher, events, closed)
       socket     <- Resource.make(open(uri, token, listener))(close(_, closed))
     yield WebSocketServerConnection(socket, events, closed, writer)
 
-  /** Starts the handshake. `buildAsync` returns immediately with a future: `fromCompletableFuture`
-   * turns it into an `IO` that suspends (without blocking a thread) until the connection is ready or fails. */
+  /** Starts the handshake. buildAsync returns immediately with a future: fromCompletableFuture
+   * turns it into an IO that suspends (without blocking a thread) until the connection is ready or fails. */
   private def open(uri: URI, token: Option[String], listener: WebSocket.Listener): IO[WebSocket] =
     IO.fromCompletableFuture(IO:
       val builder = http.newWebSocketBuilder().connectTimeout(ConnectTimeout)
@@ -54,19 +53,19 @@ object WebSocketConnection:
   private final class EventListener(dispatcher: Dispatcher[IO], events: Queue[IO, ConnectionEvent], closed: Deferred[IO, Unit])
     extends WebSocket.Listener:
 
-    private val partial = StringBuilder() // a text message may arrive split in several fragments
+    private val partial = StringBuilder() //a text message may arrive split in several fragments
 
     override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
       partial.append(data)
-      if last then  // the message is complete: decode it and publish it
+      if last then  //the message is complete: decode it and publish it
         val text = partial.toString
         partial.clear()
         dispatcher.unsafeRunAndForget(events.offer(decode(text)))
-      ws.request(1) // the JDK delivers one message at a time: ask for the next one
-      null // null = "nothing more to wait for"
+      ws.request(1) //the JDK delivers one message at a time: ask for the next one
+      null //nothing more to wait for
 
     override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
-      ws.sendClose(WebSocket.NORMAL_CLOSURE, "") // complete the closing handshake (no-op if already sent)
+      ws.sendClose(WebSocket.NORMAL_CLOSURE, "") //complete the closing handshake
       finish(s"Connection closed by the server ($statusCode)")
       null
 
@@ -96,15 +95,15 @@ object WebSocketConnection:
                                                ) extends ServerConnection:
 
     def send(message: ClientMessage): IO[Unit] =
-      writer.permit.surround: // serializes the sends: the JDK fails if two overlap
+      writer.permit.surround: //it serializes the sends: fails if two overlap
         closed.tryGet.flatMap:
           case Some(_) => IO.raiseError(ConnectionClosedException())
           case None    => IO.fromCompletableFuture(IO(socket.sendText(MessageCodec.encode(message), true))).void
 
     /** `take` suspends the caller while the queue is empty, without blocking a thread. */
     def receive: IO[ConnectionEvent] =
-      events.take.flatTap {
-        // The terminal event is put back, so every later call sees it too instead of waiting forever.
-        case terminal: ConnectionEvent.Disconnected => events.offer(terminal) // keep it for the next calls
+      events.take.flatTap:
+        // he terminal event is put back, so every later call sees it too instead of waiting forever.
+        case terminal: ConnectionEvent.Disconnected => events.offer(terminal) //keep it for the next calls
         case _                                      => IO.unit
-      }
+

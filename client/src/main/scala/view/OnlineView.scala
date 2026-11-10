@@ -87,9 +87,8 @@ object OnlineView:
   /** The line with the time left to answer, shown under a question. */
   def timeLeft(seconds: Long): String = s"Time left: $seconds s"
 
-  /** Writes the time left again on the line right above the cursor (the one written by [[timeLeft]]), leaving the
-   * cursor where it is: the player may be typing there. Uses the ANSI sequences of the terminals: save the cursor,
-   * go one line up, rewrite the line, go back. */
+  /** Writes the time left again on the line right above the cursor, leaving the
+   * cursor where it is: the player may be typing there.*/
   def refreshTimeLeft(seconds: Long)(using console: Console[IO]): IO[Unit] =
     console.print(s"\u001b7\u001b[1A\r${timeLeft(seconds)}\u001b[K\u001b8")
 

@@ -32,8 +32,7 @@ class OnlineSessionTest extends AnyFunSuite:
   private val Session = LoggedIn("alice", "a.b.c", 100.0)
   private val Table1  = TableAddress("table-1", "localhost", 9091)
 
-  /** A lobby with one user, alice, who has `money` fiches: the answers given for the seats (as the real lobby does, she
-   * gets none while she is below the minimum bet), and for the location of the table.
+  /** A lobby with one user: the answers given for the seats and for the location of the table.
    *
    * @param balanceError what the lobby says, instead of the balance, when it cannot tell it.
    */

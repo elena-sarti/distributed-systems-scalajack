@@ -7,9 +7,8 @@ import java.net.{InetSocketAddress, URI}
 import java.util.concurrent.{CountDownLatch, LinkedBlockingQueue, Semaphore, TimeUnit}
 import scala.jdk.CollectionConverters.*
 
-/** Minimal WebSocket server for the client tests: records what it receives and can write to,
- * or drop, its clients. (Queues use `offer`, which never blocks nor throws when interrupted.)
- */
+/** Minimal WebSocket server for the client tests: records what it receives and can write to
+ * or drop its clients. */
 final class FakeTableServer:
   private val received     = LinkedBlockingQueue[String]()
   private val connected    = Semaphore(0)
