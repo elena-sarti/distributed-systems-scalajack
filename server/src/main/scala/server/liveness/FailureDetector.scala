@@ -6,35 +6,30 @@ import java.time.{Duration, Instant}
 enum PeerStatus:
   case Alive, Suspected
 
-/** Who is told when the detector changes its mind about a peer. Called outside the detector's lock, so a
- * listener may be slow or may call the detector back. F4 will plug the promotion of the backup in here. */
+/** Who is told when the detector changes its mind about a peer. It is called outside the lock of the detector, so a
+ * listener may be slow or call the detector back. */
 trait FailureListener[P]:
   def onSuspected(peer: P): Unit
   def onRecovered(peer: P): Unit
 
-/** Failure detector based on heartbeats and a timeout: the same rule the lobby applies to the tables (E2),
- * written once and used by every node (DRY).
+/** Failure detector based on heartbeats and a timeout. A peer is suspected when silent for longer than `timeout` and
+ * alive again as soon as something is heard, and each change is reported once to the listener.
+ * How often to check and what counts as a sign of life is up to the caller.
  *
- * A peer is *suspected* when nothing has been heard from it for longer than `timeout`; it is *alive* again as
- * soon as something is heard. Each change is reported once to the listener, not at every check.
- * The detector only decides; how often to check and what counts as a sign of life is up to the caller.
- *
- * Thread-safe: signs of life arrive from HTTP threads while the periodic task checks.
- *
- * @param timeout how long a peer may stay silent (a few heartbeat periods, so one lost heartbeat is not enough).
- * @param clock   the current time; the tests replace it, so the rules are deterministic.
+ * @param timeout how long a peer may stay silent.
+ * @param clock   the current time.
  */
 final class FailureDetector[P](timeout: Duration, listener: FailureListener[P], clock: () => Instant = Instant.now):
   private final case class Seen(at: Instant, status: PeerStatus)
 
   private var peers = Map.empty[P, Seen]
 
-  /** Starts watching a peer as if it had just been heard: it gets a full timeout to show up. Does nothing
-   * if the peer is already watched. */
+  /** Starts watching a peer as if it had just been heard, so it has a full timeout to show up.
+   * Does nothing if the peer is already watched. */
   def watch(peer: P): Unit = synchronized:
     if !peers.contains(peer) then peers = peers.updated(peer, Seen(clock(), PeerStatus.Alive))
 
-  /** A sign of life (also from a peer not watched yet, which starts being watched). */
+  /** Records a sign of life. A peer not watched yet starts being watched. */
   def heardFrom(peer: P): Unit =
     val wasSuspected = synchronized:
       val previous = peers.get(peer)
@@ -42,9 +37,10 @@ final class FailureDetector[P](timeout: Duration, listener: FailureListener[P], 
       previous.exists(_.status == PeerStatus.Suspected)
     if wasSuspected then listener.onRecovered(peer)
 
-  /** Suspects the alive peers silent for longer than the timeout (a peer heard exactly `timeout` ago is
-   * still alive).
-   * @return the peers that have just become suspected by this check. */
+  /** Suspects the alive peers silent for longer than the timeout. A peer heard exactly `timeout` ago is still alive.
+   *
+   * @return the peers that have just become suspected.
+   */
   def check(): Seq[P] =
     val newlySuspected = synchronized:
       val limit  = clock().minus(timeout)
@@ -54,18 +50,18 @@ final class FailureDetector[P](timeout: Duration, listener: FailureListener[P], 
     newlySuspected.foreach(listener.onSuspected)
     newlySuspected
 
-  /** Stops watching a peer, without any signal (e.g. a backup that has become the primary). */
+  /** Stops watching a peer without any signal. */
   def forget(peer: P): Unit = synchronized:
     peers = peers - peer
 
-  /** `None` if the peer is not watched. */
+  /** The status of the peer, or `None` if it is not watched. */
   def status(peer: P): Option[PeerStatus] = synchronized(peers.get(peer).map(_.status))
 
   def isSuspected(peer: P): Boolean = status(peer).contains(PeerStatus.Suspected)
 
 /** The listener that signals the failures in the log.
  *
- * @param observer who is watching, to tell the nodes' logs apart (e.g. `table table-1`).
+ * @param observer who is watching, to tell the logs of the nodes apart.
  * @param describe how a peer is named in the message.
  */
 final class LoggingFailureListener[P](observer: String, describe: P => String = (peer: P) => peer.toString) extends FailureListener[P]:

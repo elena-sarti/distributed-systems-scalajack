@@ -2,8 +2,8 @@ package server.liveness
 
 import server.{HeartbeatResult, LobbyGateway}
 
-/** A [[LobbyGateway]] that also tells the detector when the lobby answers: every answer, whatever it says, proves
- * that the lobby is reachable. It is a decorator, so the announcer and the transport stay as they are (OCP). */
+/** A [[LobbyGateway]] that tells the detector whenever the lobby answers, since every answer proves that the lobby is
+ * reachable. */
 final class ObservedLobbyGateway(inner: LobbyGateway, detector: FailureDetector[Peer]) extends LobbyGateway:
 
   def register(id: String, host: String, wsPort: Int): Boolean =
@@ -15,7 +15,7 @@ final class ObservedLobbyGateway(inner: LobbyGateway, detector: FailureDetector[
 
   def backupHeartbeat(tableId: String): HeartbeatResult = observed(inner.backupHeartbeat(tableId))
 
-  /** Only "no answer" leaves the lobby unproven: "unknown table" is still an answer. */
+  /** Only a missing answer leaves the lobby unproven, since "unknown table" is still an answer. */
   private def observed(result: HeartbeatResult): HeartbeatResult =
     if result != HeartbeatResult.Unreachable then detector.heardFrom(Peer.Lobby)
     result
