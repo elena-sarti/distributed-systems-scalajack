@@ -2,16 +2,16 @@ package server.db
 
 /** How to reach the PostgreSQL database.
  *
- * @param url      JDBC url, e.g. `jdbc:postgresql://db:5432/scalajack`.
- * @param user     database user.
- * @param password database password (hidden by [[toString]], so it cannot leak in the logs).
+ * @param url      the JDBC url.
+ * @param user     the database user.
+ * @param password the database password, hidden by [[toString]] so it cannot leak in the logs.
  */
 final case class DbConfig(url: String, user: String, password: String):
   override def toString: String = s"DbConfig(url=$url, user=$user, password=***)"
 
 object DbConfig:
-  /** Pure function (the environment is a parameter), like `NodeConfig.fromEnv`: trivially testable.
-   * Reads DB_URL, DB_USER and DB_PASSWORD; all of them are mandatory. */
+  /** Reads `DB_URL`, `DB_USER` and `DB_PASSWORD`, which are all mandatory. The environment is a parameter so that it can be
+   * tested. */
   def fromEnv(env: Map[String, String]): Either[String, DbConfig] =
     for
       url      <- required("DB_URL", env)
