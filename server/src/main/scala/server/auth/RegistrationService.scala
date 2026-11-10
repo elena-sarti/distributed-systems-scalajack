@@ -12,13 +12,9 @@ enum RegistrationError:
   /** Somebody already registered this username (ignoring the case). */
   case UsernameTaken
 
-/** Registers new users: checks username and password, then stores the user with the *hash* of the password.
- *
- * The password is only handed to the hasher: it never reaches the repository, so it cannot end up in the
- * database, nor in a database error. The service writes nothing to the logs.
- * Thread-safe: it keeps no state of its own, and the uniqueness of the username is guaranteed by the
- * repository (in PostgreSQL, by a unique index), even when two requests arrive at the same moment.
- */
+/** Registers new users. It checks username and password and stores the user with the *hash* of the password, which is the
+ * only thing that reaches the repository. It writes nothing to the logs and is thread-safe, since the repository
+ * guarantees the uniqueness of the username. */
 final class RegistrationService(users: UserRepository, hasher: PasswordHasher):
   import RegistrationService.*
 
@@ -36,9 +32,8 @@ object RegistrationService:
   /** An upper limit, so that a huge input cannot keep the hasher busy. */
   val MaxPasswordLength = 128
 
-  /** The username is the name the player has at the tables, so it follows the same rules as there
-   * (not empty, no '_', which the model reserves for split hands), it fits the column, and it has no
-   * spaces around it ("Alice " would look like "Alice" to the other players). */
+  /** Whether the username follows the rules of the names at the tables, so it is not empty and has no '_', which the model
+   * reserves for split hands. It must also fit the column and have no spaces around it. */
   def isUsernameValid(username: String): Boolean =
     Game.arePlayersNamesValid(1)(List(username)) &&
       username.length <= MaxUsernameLength &&

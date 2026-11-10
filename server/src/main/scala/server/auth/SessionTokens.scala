@@ -9,21 +9,18 @@ import javax.crypto.spec.SecretKeySpec
 import scala.concurrent.duration.*
 import scala.util.Try
 
-/** Session tokens: the lobby issues one at login, the tables check it when a client connects.
+/** Session tokens, issued by the lobby at login and checked by the tables. A token carries the username and an expiry,
+ * signed with HMAC-SHA256 with a secret shared by lobby and tables, so a table checks it without asking anyone.
+ * Tokens cannot be revoked and stay valid until they expire.
  *
- * A token carries the username and an expiry, signed with HMAC-SHA256. Lobby and tables share the
- * secret, so a table can check a token on its own, without asking the lobby or the database; nobody
- * without the secret can forge one or change the name inside it.
- * The price of not storing the sessions is that a token cannot be revoked: it is valid until it expires.
- *
- * Format: `<username, Base64>.<expiry, epoch seconds>.<signature, Base64>`.
- */
+ * Format: `<username, Base64>.<expiry, epoch seconds>.<signature, Base64>`. */
 final class SessionTokens(secret: Array[Byte],
                           validity: FiniteDuration = SessionTokens.DefaultValidity,
                           clock: () => Instant = () => Instant.now()):
   import SessionTokens.*
   require(secret.length >= MinSecretBytes, s"The secret must be at least $MinSecretBytes bytes long")
 
+  /** A signed token for the user, valid for the configured time. */
   def issue(username: String): String =
     val payload = s"${encode(username.getBytes(UTF_8))}.${clock().plusSeconds(validity.toSeconds).getEpochSecond}"
     s"$payload.${encode(sign(payload))}"
@@ -53,7 +50,7 @@ object SessionTokens:
 
   private val Algorithm = "HmacSHA256"
 
-  /** Reads the shared secret from SESSION_SECRET: lobby and tables must be given the same value. */
+  /** Reads the shared secret from `SESSION_SECRET`. Lobby and tables must have the same value. */
   def fromEnv(env: Map[String, String]): Either[String, SessionTokens] =
     env.get("SESSION_SECRET").filter(_.nonEmpty).toRight("SESSION_SECRET is not set").flatMap: secret =>
       val bytes = secret.getBytes(UTF_8)

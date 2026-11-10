@@ -2,7 +2,7 @@ package server.auth
 
 import server.db.{BalanceRepository, UserRepository}
 
-/** A logged-in user: the username as it was registered, the token to show to the tables and the balance.
+/** A logged in user, with the username as registered, the token to show to the tables and the balance.
  * `toString` hides the token, which works like a password until it expires. */
 final case class Session(username: String, token: String, balance: Double):
   override def toString: String = s"Session($username,***,$balance)"
@@ -15,7 +15,7 @@ final class LoginService(users: UserRepository, balances: BalanceRepository,
   // password: the time of the answer does not tell who is registered.
   private lazy val dummyHash = hasher.hash("no user has this password")
 
-  /** The new session, or None if the username or the password is wrong (the caller is not told which). */
+  /** The new session, or `None` if the username or the password is wrong, without telling which. */
   def login(username: String, password: String): Option[Session] =
     users.findByUsername(username) match
       case Some(user) if hasher.verify(password, user.passwordHash) =>

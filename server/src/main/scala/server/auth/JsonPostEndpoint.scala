@@ -6,13 +6,11 @@ import protocol.LobbyApi.ApiError
 import upickle.default.ReadWriter
 import scala.util.control.NonFatal
 
-/** An HTTP endpoint of a node that takes a JSON body by POST and answers with a status and a JSON body.
+/** An HTTP endpoint that takes a JSON body by POST and answers with a status and a JSON body.
+ * It refuses other methods with 405 and large bodies with 413.
+ * Errors on the server give 500 and only their type is logged, never the request.
  *
- * It refuses other methods (405) and bodies that are too large (413). If something breaks on our side
- * (e.g. the database is down) the client gets 500, and only the kind of error is logged: never the
- * request, which may contain a password.
- *
- * @param operation    what the endpoint does, for the log (e.g. "Registration").
+ * @param operation    what the endpoint does, for the log.
  * @param maxBodyBytes the largest body accepted.
  */
 abstract class JsonPostEndpoint(operation: String, maxBodyBytes: Int = JsonPostEndpoint.MaxBodyBytes)

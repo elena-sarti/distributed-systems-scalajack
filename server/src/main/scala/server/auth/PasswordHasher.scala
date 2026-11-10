@@ -6,28 +6,22 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import scala.util.Try
 
-/** Turns a password into what is stored in the database, and checks a password against it.
- * Registration and login only know this trait, so their tests can use a fast hasher. */
+/** Turns a password into what is stored in the database and checks a password against it.
+ * Registration and login depend only on this trait. */
 trait PasswordHasher:
-  /** A salted hash of the password: the password itself cannot be read back from it. */
+  /** A salted hash of the password, from which the password cannot be read back. */
   def hash(password: String): String
 
-  /** Whether the password is the one the stored hash was made from. Never throws: a stored value
-   * that cannot be read simply does not match. */
+  /** Whether the password is the one the stored hash was made from. Never throws, a stored value that cannot be read does
+   * not match. */
   def verify(password: String, stored: String): Boolean
 
-/** PBKDF2 with HMAC-SHA256, from the JDK (no extra dependency).
+/** PBKDF2 with HMAC-SHA256, provided by the JDK. Every hash has its own random salt and the HMAC is repeated `iterations`
+ * times to slow down guessing. The stored value is `pbkdf2-sha256$<iterations>$<salt>$<hash>` in Base64, so the
+ * iterations can be raised without invalidating the registered users.
  *
- *  - Salt: every hash gets its own random salt, so two users with the same password get different
- *    hashes, and precomputed tables of hashes (rainbow tables) are useless.
- *  - Slow on purpose: the HMAC is repeated `iterations` times, so whoever steals the database needs
- *    a lot of time for every password guessed.
- *  - Self-describing: the stored value is `pbkdf2-sha256$<iterations>$<salt>$<hash>` (Base64), so a hash
- *    is always checked with the parameters it was made with, and the iterations can be raised later
- *    without invalidating the users already registered.
- *
- * @param iterations how many times the HMAC is applied (tests use few, to be fast).
- * @param random     source of the salts; it must be cryptographically strong.
+ * @param iterations how many times the HMAC is applied.
+ * @param random     the source of the salts, which must be cryptographically strong.
  */
 final class Pbkdf2PasswordHasher(iterations: Int = Pbkdf2PasswordHasher.DefaultIterations,
                                  random: SecureRandom = SecureRandom()) extends PasswordHasher:
@@ -47,7 +41,7 @@ final class Pbkdf2PasswordHasher(iterations: Int = Pbkdf2PasswordHasher.DefaultI
       MessageDigest.isEqual(derive(password, salt, storedIterations, expected.length), expected)
 
 object Pbkdf2PasswordHasher:
-  /** OWASP recommendation for PBKDF2-HMAC-SHA256 (Password Storage Cheat Sheet). */
+  /** The iterations recommended by OWASP for PBKDF2-HMAC-SHA256. */
   val DefaultIterations = 600_000
 
   private val Algorithm = "PBKDF2WithHmacSHA256"
