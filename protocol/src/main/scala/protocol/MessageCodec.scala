@@ -5,9 +5,7 @@ import scala.util.Try
 
 /** Single entry point to turn protocol messages into JSON text and back.
  *
- * Every message becomes a self-contained JSON string, sent as one WebSocket text frame:
- * since WebSocket already delimits messages, no extra framing is needed.
- * Decoding never throws: data coming from the network is untrusted, so a malformed
+ * Every message becomes a JSON string and data coming from the network is untrusted, so a malformed
  * message becomes a `Left` with the reason, and the caller decides how to react.
  */
 object MessageCodec:

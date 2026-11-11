@@ -2,7 +2,7 @@ package server.auth
 
 import server.db.{BalanceRepository, UserRepository}
 
-/** A logged in user, with the username as registered, the token to show to the tables and the balance.
+/** A logged-in user, with the username as registered, the token to show to the tables and the balance.
  * `toString` hides the token, which works like a password until it expires. */
 final case class Session(username: String, token: String, balance: Double):
   override def toString: String = s"Session($username,***,$balance)"

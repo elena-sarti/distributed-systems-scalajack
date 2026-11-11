@@ -11,8 +11,7 @@ object TableTakeover:
   val DefaultReturnWindow: FiniteDuration = 30.seconds
 
   /** The table as it was at the last state the backup stored, with every player seated and waiting for their client to come
-   * back within `returnWindow` (see [[TableHandler.awaitReturn]]). Whoever does not come back is treated as a client that
-   * drops.
+   * back within `returnWindow`. Whoever does not come back is treated as a client that drops.
    *
    * @param snapshot     the last state of the primary, or `None` if it never sent one.
    * @param cashier      it must not release the players at start-up, since they are still marked as seated.

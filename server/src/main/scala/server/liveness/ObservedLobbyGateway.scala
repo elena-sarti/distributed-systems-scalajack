@@ -2,7 +2,7 @@ package server.liveness
 
 import server.{HeartbeatResult, LobbyGateway}
 
-/** A [[LobbyGateway]] that tells the detector whenever the lobby answers, since every answer proves that the lobby is
+/** A gateway that tells the detector whenever the lobby answers, since every answer proves that the lobby is
  * reachable. */
 final class ObservedLobbyGateway(inner: LobbyGateway, detector: FailureDetector[Peer]) extends LobbyGateway:
 

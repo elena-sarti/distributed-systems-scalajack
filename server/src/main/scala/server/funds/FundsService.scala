@@ -6,7 +6,7 @@ import java.math.BigDecimal as JBigDecimal
 
 /** Why a balance cannot be read, or money cannot be deposited or withdrawn. */
 enum FundsRefusal:
-  /** The amount is not a positive number of fiches within the limits (see [[FundsService.isAmountValid]]). */
+  /** The amount is not a positive number of fiches within the limits . */
   case InvalidAmount
   /** The user does not exist. */
   case UnknownUser

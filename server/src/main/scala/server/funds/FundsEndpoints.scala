@@ -8,7 +8,7 @@ import server.auth.{AuthenticatedEndpoint, SessionTokens}
  * parameter. Answers 200 with the new balance, or 400, 404 or 409 with the reason.
  *
  * @param operation what the endpoint does, for the log.
- * @param move      the operation on the funds of a user, [[FundsService.deposit]] or [[FundsService.withdraw]].
+ * @param move      the operation on the funds of a user.
  */
 final class FundsEndpoint(operation: String, tokens: SessionTokens, move: (String, Double) => Either[FundsRefusal, Double])
   extends AuthenticatedEndpoint[AmountRequest](operation, tokens):

@@ -12,7 +12,7 @@ import scala.collection.mutable.ListBuffer
  *
  * @param cashier    the cashier the table uses.
  * @param replicator how the new states are sent to the backup.
- * @param epoch      the epoch this primary starts with (see [[ReplicaUpdate]]).
+ * @param epoch      the epoch this primary starts with.
  * @param newTable   builds the table on the cashier it must use.
  */
 final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Long,

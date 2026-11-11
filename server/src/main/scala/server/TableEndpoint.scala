@@ -12,8 +12,8 @@ import java.net.InetSocketAddress
 import java.util.UUID
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch, TimeUnit}
 
-/** WebSocket transport of a table node. It turns every text frame into a [[protocol.ClientMessage]] for the
- * [[SessionHandler]] and knows nothing about the game. The opening handshake must carry `Authorization: Bearer <token>`
+/** WebSocket transport of a table node.
+ * The opening handshake must carry `Authorization: Bearer <token>`
  * with a valid session token, and the connection speaks for that user only.
  *
  * @param port    the port to listen on, or 0 for a free port chosen by the OS.

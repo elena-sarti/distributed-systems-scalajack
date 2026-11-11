@@ -4,7 +4,7 @@ import protocol.ModelCodecs.given
 import upickle.default.ReadWriter
 import utils.ModelExports.{PlayerState, StandardCard}
 
-/** One hand at the table, either the player's own or one split from it (`split`), with the money it holds. */
+/** One hand at the table, either the player's own or one split from it, with the money it holds. */
 final case class HandSnapshot(name: String, split: Boolean, cards: List[StandardCard], balance: Double,
                               state: PlayerState, insured: Boolean) derives ReadWriter
 

@@ -4,7 +4,7 @@ import protocol.LobbyApi
 import protocol.LobbyApi.ApiError
 import server.auth.JsonPostEndpoint
 
-/** `POST /replica` on the backup: the primary sends a [[ReplicaUpdate]]. Answers 200 if it is stored, 409 if the backup
+/** `POST /replica` on the backup. Answers 200 if it is stored, 409 if the backup
  * follows a newer primary and 400 if the body is not an update. */
 final class ReplicaEndpoint(backup: BackupReplica)
   extends JsonPostEndpoint("Replication", ReplicaEndpoint.MaxBodyBytes):

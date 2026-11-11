@@ -4,10 +4,10 @@ import protocol.LobbyApi
 import protocol.LobbyApi.ApiError
 import upickle.default.ReadWriter
 
-/** A [[JsonPostEndpoint]] for the requests of a logged in player. It answers 400 if the body is not valid and 401 if the
+/** An endpoint for the requests of a logged in player. It answers 400 if the body is not valid and 401 if the
  * token is forged or expired, and only then lets the subclass answer for the user. The token is never logged.
  *
- * @tparam R a message of [[LobbyApi]] that carries a session token.
+ * @tparam R a message that carries a session token.
  */
 abstract class AuthenticatedEndpoint[R: ReadWriter](operation: String, tokens: SessionTokens)
   extends JsonPostEndpoint(operation):

@@ -7,7 +7,7 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
 import scala.util.control.NonFatal
 
-/** The backup reached over HTTP (see [[ReplicaEndpoint]] and [[PrimaryHeartbeatEndpoint]]).
+/** The backup reached over HTTP.
  *
  * @param backupUrl the address of the backup node.
  * @param timeout   how long the table waits for the backup, during which nobody at the table can play.

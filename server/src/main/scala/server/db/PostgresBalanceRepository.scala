@@ -4,7 +4,7 @@ import java.math.BigDecimal
 import java.sql.{Connection, PreparedStatement, ResultSet}
 import scala.util.Using
 
-/** [[BalanceRepository]] on the `balance` and `table_id` columns of the `users` table. */
+/** A repository on the `balance` and `table_id` columns of the `users` table. */
 final class PostgresBalanceRepository(database: Database) extends BalanceRepository:
 
   // The WHERE clause is the lock: if another table has already set table_id, no row matches and

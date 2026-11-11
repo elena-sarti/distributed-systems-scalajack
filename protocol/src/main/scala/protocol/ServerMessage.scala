@@ -67,8 +67,7 @@ enum ServerMessage derives ReadWriter:
 
   /** The hand is over and the payouts have been applied.
    *
-   * @param balances the name and the new balance of every player still at the table
-   *                 (same shape returned by the model's `Game.balances`).
+   * @param balances the name and the new balance of every player still at the table.
    */
   case HandResults(balances: List[(String, Double)])
 
@@ -84,7 +83,7 @@ enum ServerMessage derives ReadWriter:
    */
   case ErrorMessage(reason: String)
 
-  /** The time to decide is over and the table has decided for the player (see [[Decision]] for what it chose).
+  /** The time to decide is over and the table has decided for the player.
    * Sent only to the late player, so a client can explain why the game went on without them.
    * 
    * @param decision which decision the player did not take in time.
