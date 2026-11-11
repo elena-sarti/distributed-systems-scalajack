@@ -16,7 +16,7 @@ trait PasswordHasher:
    * not match. */
   def verify(password: String, stored: String): Boolean
 
-/** PBKDF2 with HMAC-SHA256, provided by the JDK. Every hash has its own random salt and the HMAC is repeated `iterations`
+/** PBKDF2 with HMAC-SHA256. Every hash has its own random salt and the HMAC is repeated `iterations`
  * times to slow down guessing. The stored value is `pbkdf2-sha256$<iterations>$<salt>$<hash>` in Base64, so the
  * iterations can be raised without invalidating the registered users.
  *

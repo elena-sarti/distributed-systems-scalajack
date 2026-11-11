@@ -3,7 +3,7 @@ package server.replication
 import model.DeckModule.toList
 import utils.ModelExports.*
 
-/** Turns a game into the hands, bets, dealer's cards and deck of a [[TableSnapshot]], and back. */
+/** Turns a game into the hands, bets, dealer's cards and deck of a snapshot, and back. */
 object GameSnapshots:
 
   def hands(game: Game): List[HandSnapshot] = game.players.map: player =>

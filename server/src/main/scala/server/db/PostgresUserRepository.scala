@@ -2,7 +2,7 @@ package server.db
 
 import scala.util.Using
 
-/** [[UserRepository]] on the `users` table of PostgreSQL (see `db/schema.sql`). */
+/** A repository on the `users` table of PostgreSQL (see `db/schema.sql`). */
 final class PostgresUserRepository(database: Database) extends UserRepository:
 
   // ON CONFLICT DO NOTHING: if the unique index rejects the row nothing is inserted and nothing is returned.

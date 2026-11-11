@@ -4,10 +4,9 @@ import upickle.default.ReadWriter
 import protocol.ModelCodecs.given
 import utils.ModelExports.*
 
-/** What every client can see about a single player (or split hand) at the table.
- * Cards and state reuse the model types directly, no separate DTOs are introduced.
+/** What every client can see about a single player or split hand at the table.
  *
- * @param name    the name of the player, or of the hand after a split (e.g. "Alice_split1").
+ * @param name    the name of the player, or of the hand after a split
  * @param cards   the cards in the hand.
  * @param state   the state of the hand (active, standing, busted, blackjack).
  * @param balance the current balance of the player.

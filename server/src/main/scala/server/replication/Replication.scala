@@ -21,8 +21,7 @@ final case class ReplicaHeartbeat(epoch: Long) derives ReadWriter
 /** The answer of the backup to a heartbeat it has accepted. */
 final case class HeartbeatAck(epoch: Long) derives ReadWriter
 
-/** How the primary tells the backup that it is alive. It is separate from [[Replicator]] since the job and the rhythm are
- * different (ISP). */
+/** How the primary tells the backup that it is alive. */
 trait BackupHeartbeats:
   /** Returns true only if the backup answered, which also tells the primary that the backup is alive. Never throws. */
   def heartbeat(epoch: Long): Boolean

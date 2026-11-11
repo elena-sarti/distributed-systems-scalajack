@@ -10,7 +10,6 @@ import scala.annotation.tailrec
 import scala.concurrent.duration.*
 
 /** The logic of one table, which is who is seated and how a hand is played through the messages of the clients.
- * It is not thread-safe, so it must be driven by a [[SingleWriterHandler]].
  *
  * @param cashier         gives the balance of a player who sits down and takes it back when they leave.
  * @param newGame         creates the game of the table.
@@ -54,7 +53,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   /** After a take over, when the seats of the players who have not come back are given up. */
   private var returnDeadline: Option[Instant] = None
 
-  /** Everything needed to rebuild this table elsewhere (see [[TableSnapshot]]). */
+  /** Everything needed to rebuild this table elsewhere. */
   def snapshot: TableSnapshot =
     val seated = seats.values.map(seat => seat.player.name -> seat.connected).toMap
     val phaseNow = phase match
@@ -75,7 +74,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
       deadline      = deadline.map(_.toEpochMilli)
     )
 
-  /** The connection of every seated player by name, so that [[restore]] can put the table back as it is now. */
+  /** The connection of every seated player by name. */
   def connections: Map[String, Connection] = seats.values.map(seat => seat.player.name -> seat.connection).toMap
 
   /** Replaces the current state with the one described by the snapshot.
