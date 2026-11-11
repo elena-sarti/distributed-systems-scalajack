@@ -3,10 +3,10 @@ package protocol
 import upickle.default.{ReadWriter, read, write}
 import scala.util.Try
 
-/** The HTTP API of the lobby: plain request-response with JSON bodies.
+/** The HTTP API of the lobby, request-response with JSON bodies.
  *
  * The tables use WebSocket because they push events during a hand; the lobby only answers requests,
- * so HTTP is enough. The types are here, next to the table messages, because the client uses them too.
+ * so HTTP is enough.
  */
 object LobbyApi:
 

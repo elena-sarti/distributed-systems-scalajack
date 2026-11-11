@@ -2,19 +2,16 @@ package protocol
 
 import upickle.default.ReadWriter
 
-/** Messages that a client sends to a table node.
- *
- * `derives ReadWriter` asks upickle to generate the JSON (de)serializer at compile time.
- */
-enum ClientMessage derives ReadWriter:
+/** Messages that a client sends to a table node. */
+enum ClientMessage derives ReadWriter: //ReadWriter allows to serialize and deserialize into JSON format.
 
-  /** First message of a session: the player asks to sit at the table.
+  /** The request of a player to sit at a table.
    *
    * @param playerName the name shown to the other players at the table.
    */
   case JoinTable(playerName: String)
 
-  /** Answer to a [[ServerMessage.BetRequest]]: the amount the player wants to bet for this hand.
+  /** The amount the player wants to bet for this hand.
    *
    * @param amount the amount of the bet.
    */
@@ -32,12 +29,12 @@ enum ClientMessage derives ReadWriter:
   /** Splits the current hand into two separate hands. */
   case Split
 
-  /** Answer to a [[ServerMessage.InsuranceOffer]].
+  /** Answer to a request of insurance deal, when the dealer shows an Ace.
    *
    * @param accept `true` if the player wants to buy the insurance.
    */
   case AnswerInsurance(accept: Boolean)
 
-  /** The player voluntarily leaves the table. The seat is released at once, even in the middle of a hand:
-   * the player's hands are taken away, a bet already placed is lost and the table never waits for them again. */
+  /** The player voluntarily leaves the table: the seat is released,
+   *  a bet already placed is lost and the table never waits for them again. */
   case LeaveTable
