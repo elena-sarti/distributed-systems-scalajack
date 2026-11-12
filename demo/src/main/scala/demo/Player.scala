@@ -3,7 +3,7 @@ package demo
 import protocol.{ClientMessage, MessageCodec, ServerMessage}
 import protocol.ClientMessage.{AnswerInsurance, JoinTable, PlaceBet, Stand}
 import protocol.LobbyApi
-import protocol.LobbyApi.{AmountRequest, AssignRequest, Funds, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
+import protocol.LobbyApi.{AmountRequest, AssignRequest, BalanceRequest, Funds, LocateRequest, LoggedIn, LoginRequest, RegisterRequest, TableAddress}
 import protocol.ServerMessage.{ActionRequest, BetRequest, ErrorMessage, HandResults, InsuranceOffer, JoinAccepted, JoinRejected, TableUpdate}
 import protocol.PlayerView
 import upickle.default.ReadWriter
@@ -25,10 +25,21 @@ final class Lobby(baseUrl: String):
       case _           => None
 
   /** Deposits amount fiches: the new balance, or None if the lobby refused or did not answer. */
-  def deposit(token: String, amount: Double): Option[Double] =
-    post(LobbyApi.DepositPath, AmountRequest(token, amount)) match
-      case (200, body) => LobbyApi.decode[Funds](body).toOption.map(_.balance)
-      case _           => None
+  def deposit(token: String, amount: Double): Option[Double] = move(LobbyApi.DepositPath, token, amount).toOption
+
+  /** Withdraws amount fiches: the new balance, or the status of the refusal (0 if the lobby did not answer). */
+  def withdraw(token: String, amount: Double): Either[Int, Double] = move(LobbyApi.WithdrawPath, token, amount)
+
+  /** The balance kept by the lobby, or the status of the refusal (0 if the lobby did not answer). */
+  def balance(token: String): Either[Int, Double] =
+    post(LobbyApi.BalancePath, BalanceRequest(token)) match
+      case (200, body) => LobbyApi.decode[Funds](body).map(_.balance).left.map(_ => 200)
+      case (status, _) => Left(status)
+
+  private def move(path: String, token: String, amount: Double): Either[Int, Double] =
+    post(path, AmountRequest(token, amount)) match
+      case (200, body) => LobbyApi.decode[Funds](body).map(_.balance).left.map(_ => 200)
+      case (status, _) => Left(status)
 
   /** Where the lobby sends the player now, or the status of the refusal (0 if the lobby did not answer). */
   def assign(token: String): Either[Int, TableAddress] =
