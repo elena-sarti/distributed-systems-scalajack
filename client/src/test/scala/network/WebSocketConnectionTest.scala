@@ -74,6 +74,24 @@ class WebSocketConnectionTest extends AnyFunSuite:
         IO(server.disconnectClients()) *> List.fill(3)(connection.receive).sequence
       events.forall(_.isInstanceOf[ConnectionEvent.Disconnected]) shouldBe true
 
+  /** A connection that pings the server often and gives it up soon, so the tests do not wait long. */
+  private def quickWatch(server: FakeTableServer) =
+    WebSocketConnection.connect(server.uri, pingEvery = 200.millis, silence = 1.second)
+
+  test("a server that stops answering, like a frozen node, is taken as lost"):
+    withServer: server =>
+      val event = quickWatch(server).use: connection =>
+        IO.blocking(server.awaitClientConnected()) *> IO(server.answersPings = false) *> connection.receive
+      .timeout(10.seconds).unsafeRunSync()
+      event shouldBe a[ConnectionEvent.Disconnected]
+
+  test("a server that answers the pings keeps the connection, even if it sends nothing"):
+    withServer: server =>
+      val event = quickWatch(server).use: connection =>
+        IO.blocking(server.awaitClientConnected()) *> IO.race(connection.receive, IO.sleep(3.seconds))
+      .timeout(10.seconds).unsafeRunSync()
+      event shouldBe Right(())
+
   test("sending after the connection is lost fails with ConnectionClosedException"):
     withServer: server =>
       val result = withConnection(server): connection =>

@@ -5,8 +5,10 @@ import cats.effect.std.{Dispatcher, Queue, Semaphore}
 import protocol.{ClientMessage, MessageCodec}
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
+import java.nio.ByteBuffer
 import java.time.Duration as JDuration
 import java.util.concurrent.CompletionStage
+import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.*
 
 /** Opens a [[ServerConnection]] over WebSocket, using the JDK's built-in client. */
@@ -17,8 +19,13 @@ object WebSocketConnection:
 
   /** The connection lives as long as the [[Resource]] is in use and is always closed afterward.
    *
+   * A table node that crashes closes the connection, but one that freezes or is cut off by the network says nothing:
+   * so the client pings it every `pingEvery` and takes the connection as lost when nothing has come back for `silence`,
+   * the same failure detector the nodes use among them.
+   *
    * @param token the session token given by the lobby: the tables accept only the clients that show one */
-  def connect(uri: URI, token: Option[String] = None): Resource[IO, ServerConnection] =
+  def connect(uri: URI, token: Option[String] = None,
+              pingEvery: FiniteDuration = 2.seconds, silence: FiniteDuration = 6.seconds): Resource[IO, ServerConnection] =
     for
       // Bridge between the callbacks and cats-effect: it runs the effects
       // submitted by the callbacks one at a time and in order, so messages are not reordered.
@@ -31,7 +38,16 @@ object WebSocketConnection:
       writer     <- Resource.eval(Semaphore[IO](1))
       listener    = EventListener(dispatcher, events, closed)
       socket     <- Resource.make(open(uri, token, listener))(close(_, closed))
+      _          <- watch(socket, listener, writer, pingEvery, silence).background
     yield WebSocketServerConnection(socket, events, closed, writer)
+
+  /** Pings the table and gives the connection up when the table has been silent for too long. */
+  private def watch(socket: WebSocket, listener: EventListener, writer: Semaphore[IO],
+                    pingEvery: FiniteDuration, silence: FiniteDuration): IO[Unit] =
+    val ping = writer.permit.surround(IO.fromCompletableFuture(IO(socket.sendPing(ByteBuffer.allocate(0)))).void).attempt.void
+    (IO.sleep(pingEvery) >> IO(listener.silentFor)).flatMap: quiet =>
+      if quiet > silence then IO(listener.lost(s"The table has not answered for ${silence.toSeconds} s")) >> IO(socket.abort())
+      else ping >> watch(socket, listener, writer, pingEvery, silence)
 
   /** Starts the handshake. buildAsync returns immediately with a future: fromCompletableFuture
    * turns it into an IO that suspends (without blocking a thread) until the connection is ready or fails. */
@@ -54,8 +70,20 @@ object WebSocketConnection:
     extends WebSocket.Listener:
 
     private val partial = StringBuilder() //a text message may arrive split in several fragments
+    private val lastHeard = AtomicLong(System.nanoTime())
+
+    /** How long since anything came from the table. */
+    def silentFor: FiniteDuration = (System.nanoTime() - lastHeard.get).nanos
+
+    def lost(reason: String): Unit = finish(reason)
+
+    override def onPong(ws: WebSocket, message: ByteBuffer): CompletionStage[?] =
+      lastHeard.set(System.nanoTime())
+      ws.request(1)
+      null
 
     override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
+      lastHeard.set(System.nanoTime())
       partial.append(data)
       if last then  //the message is complete: decode it and publish it
         val text = partial.toString
