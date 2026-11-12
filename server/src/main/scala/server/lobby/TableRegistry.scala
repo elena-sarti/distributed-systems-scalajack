@@ -29,12 +29,12 @@ final class TableRegistry(capacity: Int = Game.MaxPlayersNum):
 
   /** Sets how many seats are free, as reported by the table. Refuses a number outside 0 to the capacity. */
   def updateFreeSeats(id: String, free: Int): Either[RegistryError, TableInfo] =
-    withSeats(id, free)(identity)
+    withSeats(id, free, None)(identity)
 
   /** Records a sign of life from a table heard at `at`, with its free seats. The table becomes available, also if it had
    * been marked unavailable for being silent. */
   def heartbeat(id: String, free: Int, at: Instant = Instant.now()): Either[RegistryError, TableInfo] =
-    withSeats(id, free)(entry => entry.copy(info = entry.info.copy(status = TableStatus.Available), lastSeen = at))
+    withSeats(id, free, Some(at))(entry => entry.copy(info = entry.info.copy(status = TableStatus.Available), lastSeen = at))
 
   /** Marks a table as usable or not, leaving its seats as they are. */
   def markStatus(id: String, status: TableStatus): Either[RegistryError, TableInfo] =
@@ -82,10 +82,15 @@ final class TableRegistry(capacity: Int = Game.MaxPlayersNum):
   /** A snapshot of all the tables, ordered by id. */
   def tables: Seq[TableInfo] = synchronized(byId.values.map(_.info).toSeq).sortBy(_.id)
 
-  /** Checks and sets the free seats of a known table, then applies `adjust` to the entry. */
-  private def withSeats(id: String, free: Int)(adjust: Entry => Entry): Either[RegistryError, TableInfo] =
+  /** Checks and sets the free seats of a known table, then applies `adjust` to the entry. Seats taken since the last report
+   * are the reserved players who have sat down: as many reservations as seats taken are used up, the oldest first, so
+   * that a seated player is not counted twice, once by the table and once by the reservation. */
+  private def withSeats(id: String, free: Int, at: Option[Instant])(adjust: Entry => Entry): Either[RegistryError, TableInfo] =
     if free < 0 || free > capacity then Left(RegistryError.InvalidFreeSeats(free, capacity))
-    else change(id)(entry => adjust(entry.copy(info = entry.info.copy(freeSeats = free))))
+    else change(id): entry =>
+      val taken = math.max(0, entry.info.freeSeats - free)
+      val live  = at.fold(entry.reservations)(now => entry.reservations.filter(_.isAfter(now)))
+      adjust(entry.copy(info = entry.info.copy(freeSeats = free), reservations = live.drop(taken)))
 
   /** Applies a change to a known table. Finding, changing and storing are done only here. */
   private def change(id: String)(update: Entry => Entry): Either[RegistryError, TableInfo] = synchronized:

@@ -201,6 +201,21 @@ class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
     small.heartbeat("a", 1, t0.plusSeconds(2)).value // the player has not sat down yet: the table still says 1 free
     reserve(small, t0.plusSeconds(2)) shouldBe None
 
+  test("a heartbeat that shows the reserved player seated uses up the reservation: the seat is not counted twice"):
+    register("table-1")
+    reserve()
+    reserve()
+    registry.heartbeat("table-1", Capacity - 1, t0.plusSeconds(2)).value // one of the two has sat down
+    registry.assignableSeats("table-1", t0.plusSeconds(2)) shouldBe Some(Capacity - 2)
+
+  test("players arriving one after the other can take every seat of the table"):
+    register("table-1")
+    (0 until Capacity).foreach: arrived =>
+      val at = t0.plusSeconds(3L * arrived)
+      reserve(at = at) shouldBe Some("table-1")
+      registry.heartbeat("table-1", Capacity - arrived - 1, at.plusSeconds(1)).value // the player has sat down
+    reserve(at = t0.plusSeconds(3L * Capacity)) shouldBe None
+
   test("the assignable seats are never negative, even if the table reports fewer seats than are reserved"):
     register("table-1")
     reserve()
