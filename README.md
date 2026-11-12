@@ -10,12 +10,12 @@ The system is designed to support flexible gameplay sessions, allowing participa
 * **Classic Gameplay Options**, including seamless support for hit, stand, double down, and split.
 
 ## Playing online
-Start the server with Docker,run the client from the root of the repository executing the `.jar` file downloadable from the [latest release](../../releases) and follow the prompts (register, log in, sit at a table, play):
+Start the server with Docker, run the client from the root of the repository executing the `.jar` file downloadable from the [latest release](../../releases) and follow the prompts (register, log in, deposit some fiches, sit at a table, play):
 ```bash
 docker compose up --build
 java -jar scalajack-client.jar
 ```
-On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards.
+On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards. A new account starts with no fiches: deposit at least the minimum bet (5) before sitting at a table.
 
 ## Failure demo
 The failures described in the [decision record](DECISION_RECORD.md) can be played on the Docker deployment. Build the image then run the scenarios from the root of the repository:

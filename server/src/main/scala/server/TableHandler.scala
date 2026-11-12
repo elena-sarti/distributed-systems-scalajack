@@ -116,8 +116,8 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
   def onDisconnected(connection: Connection): Unit =
     seats.get(connection.id).foreach(disconnect)
 
-  /** The client is gone: during a hand the seat is kept until the hand is over, its hands stand by themselves and the table
-   * never waits for them. Otherwise the seat is freed at once. */
+  /** The client is gone: during a hand the seat is kept until the hand is over, the table plays its hands and never waits
+   * for them. Otherwise the seat is freed at once. */
   private def disconnect(seat: Seat): Unit = phase match
     case Phase.Insurance(awaiting, accepted) =>
       keepUntilEndOfHand(seat)
@@ -167,7 +167,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     case _ => ()
 
   /** The time to come back is over, so the players still absent are treated as disconnected. Before the deal their bets go
-   * back to them, from the deal on their hands stand. */
+   * back to them, from the deal on the table plays their hands. */
   private def giveUpWaiting(): Unit =
     returnDeadline = None
     val absent = seats.values.filter(seat => seat.connected && seat.connection.isInstanceOf[Absent]).toList

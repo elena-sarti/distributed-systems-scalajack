@@ -249,5 +249,28 @@ blackjack of online casinos. What the table decides for a late player:
 Every request is preceded by `TimeToDecide(seconds)`, the time left before the table decides. It is a number of seconds
 and not a time of day, so that the client counts down with its own clock: the clocks of the client and of the table
 node never have to agree. When a player sits down while the others are betting, the time to bet starts again for
-everybody, so that the newcomer has all of it too (the players who have not bet yet are asked again with the new time). The client shows the countdown under the question and withdraws the question when the time is over: an answer
-typed too late is never sent.
+everybody, so that the newcomer has all of it too (the players who have not bet yet are asked again with the new time).
+The client shows the countdown under the question and withdraws the question when the time is over: an answer typed
+too late is never sent.
+
+## The money of the players: deposit and withdrawal in the lobby (G2, G3, G4)
+
+A new account starts with no fiches. After logging in the player is in the lobby, where they can see their balance,
+deposit, withdraw and ask for a seat (`/balance`, `/deposit`, `/withdraw`, `/assign`, all with the session token).
+
+- **The balance has one owner at a time.** While the player is not seated it belongs to the lobby, that is to the
+  database. While they are seated it belongs to the table, which takes it with `sitDown` and gives it back with
+  `standUp`. So a deposit or a withdrawal is refused (409) while the player is seated: the `standUp` of the table would
+  otherwise overwrite it (lost update). It is the same rule as "a user sits at one table at a time".
+- **Each movement is one atomic statement**:
+  `UPDATE users SET balance = balance + ? WHERE ... AND table_id IS NULL AND balance + ? >= 0`. The condition is at once
+  the lock (nobody is seated) and the guard (the balance never goes below zero), so two concurrent requests can never
+  both pass a check made on a stale balance. When no row changes, a read tells why (unknown user, seated, not enough
+  fiches).
+- **Amounts are exact**: `NUMERIC(12, 2)` in the database and `BigDecimal` in the code. An amount must be positive,
+  with at most two decimals and not above 1,000,000.
+- **No seat below the minimum bet.** `/assign` refuses (403) a player with less than the minimum bet before taking a
+  seat or starting a new table. The table checks again when the player joins.
+- **Leaving a table.** The table frees the seat and gives the balance back a moment after the player leaves, and only
+  at the end of the hand if the player leaves during one. The client waits briefly for that before showing the lobby;
+  until then the lobby still shows the balance from before the table and refuses to move it.

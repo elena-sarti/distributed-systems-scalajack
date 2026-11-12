@@ -140,6 +140,6 @@ class TableHandlerResumeTest extends AnyFunSuite with BeforeAndAfterEach:
     List(alice, bob).zip(List("Alice", "Bob")).foreach((connection, name) => primary.onMessage(connection, JoinTable(name)))
     primary.onMessage(alice, PlaceBet(10))
     primary.onMessage(bob, PlaceBet(10))
-    primary.onDisconnected(alice) // Alice's client dropped in the middle of the hand: her hand stands, her seat stays until the end
+    primary.onDisconnected(alice) // Alice's client dropped in the middle of the hand: the table plays it, her seat stays until the end
     val table = takeOver(primary.snapshot)
     comesBack(table, "Alice").inbox.toList shouldBe List(JoinRejected(TableHandler.NameTaken))
