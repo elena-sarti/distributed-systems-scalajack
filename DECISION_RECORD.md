@@ -268,7 +268,8 @@ deposit, withdraw and ask for a seat (`/balance`, `/deposit`, `/withdraw`, `/ass
   both pass a check made on a stale balance. When no row changes, a read tells why (unknown user, seated, not enough
   fiches).
 - **Amounts are exact**: `NUMERIC(12, 2)` in the database and `BigDecimal` in the code. An amount must be positive,
-  with at most two decimals and not above 1,000,000.
+  not above 1,000,000 and a multiple of 0.5, the smallest fiche: the tables hold the money as fiches, and a balance
+  with cents could not be seated (the table refused it and the player stayed marked as seated).
 - **No seat below the minimum bet.** `/assign` refuses (403) a player with less than the minimum bet before taking a
   seat or starting a new table. The table checks again when the player joins.
 - **Leaving a table.** The table frees the seat and gives the balance back a moment after the player leaves, and only

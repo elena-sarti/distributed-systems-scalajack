@@ -1,7 +1,7 @@
 package server.funds
 
 import server.db.{BalanceRepository, FundsError}
-import utils.ModelExports.Game
+import utils.ModelExports.{Fiche, Game}
 import java.math.BigDecimal as JBigDecimal
 
 /** Why a balance cannot be read, or money cannot be deposited or withdrawn. */
@@ -44,6 +44,8 @@ object FundsService:
   /** The most that can be moved at once, well below what the `balance` column can hold. */
   val MaxAmount = 1_000_000.0
 
-  /** Whether the amount is finite, positive, with at most two decimals and not above [[MaxAmount]]. */
+  /** Whether the amount is finite, positive, not above [[MaxAmount]] and made of whole fiches: the tables hold the money
+   * as fiches, the smallest of which is worth 0.5, and could not seat a player whose balance is not. */
   def isAmountValid(amount: Double): Boolean =
-    amount.isFinite && amount > 0 && amount <= MaxAmount && JBigDecimal.valueOf(amount).scale <= 2
+    amount.isFinite && amount > 0 && amount <= MaxAmount &&
+      JBigDecimal.valueOf(amount).remainder(JBigDecimal.valueOf(Fiche.smallestDenomination)).signum == 0

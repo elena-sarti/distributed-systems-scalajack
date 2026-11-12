@@ -25,15 +25,15 @@ class FundsServiceTest extends AnyFunSuite with BeforeAndAfterEach:
     funds.withdraw("Alice", 50.0) shouldBe Right(62.5)
     funds.balance("Alice") shouldBe Right(62.5)
 
-  test("an amount must be positive, finite, with at most two decimals and not above the maximum"):
-    val invalid = List(0.0, -5.0, Double.NaN, Double.PositiveInfinity, 10.001, FundsService.MaxAmount + 1)
+  test("an amount must be positive, finite, a multiple of the smallest fiche and not above the maximum"):
+    val invalid = List(0.0, -5.0, Double.NaN, Double.PositiveInfinity, 10.001, 0.01, 22.34, 99.99, FundsService.MaxAmount + 1)
     invalid.foreach: amount =>
       withClue(s"amount $amount: "):
         FundsService.isAmountValid(amount) shouldBe false
         funds.deposit("Alice", amount) shouldBe Left(FundsRefusal.InvalidAmount)
         funds.withdraw("Alice", amount) shouldBe Left(FundsRefusal.InvalidAmount)
     funds.balance("Alice") shouldBe Right(0.0) // nothing moved
-    List(0.01, 5.0, 99.99, FundsService.MaxAmount).foreach(amount => FundsService.isAmountValid(amount) shouldBe true)
+    List(0.5, 5.0, 99.5, FundsService.MaxAmount).foreach(amount => FundsService.isAmountValid(amount) shouldBe true)
 
   test("a withdrawal of more than the balance is refused and the balance stays"):
     funds.deposit("Alice", 20.0)
