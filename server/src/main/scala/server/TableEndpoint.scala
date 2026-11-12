@@ -50,6 +50,8 @@ final class TableEndpoint(port: Int, handler: SessionHandler, tokens: SessionTok
   def connectionCount: Int = connections.size
 
   private final class Server extends WebSocketServer(InetSocketAddress(port)):
+    // a node restarted right after a crash can take the port back while the old connections are still closing
+    setReuseAddr(true)
 
     override def onStart(): Unit = started.countDown()
 
