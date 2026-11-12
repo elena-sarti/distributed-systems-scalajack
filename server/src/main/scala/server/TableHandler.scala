@@ -383,6 +383,7 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
       val bothHands = hand :: game.getNextPlayer(hand).toList // the model puts the new hand right after the original one
       val withBlackjack = game.playersWithBlackjack(bothHands)
       game.handleBlackjacks(withBlackjack)
+      withBlackjack.filterNot(_ == hand).filterNot(hasBet).foreach(paid => moveMoney(from = paid, to = hand))
       if withBlackjack.contains(hand) then nextTurn(nextToPlay(after = hand)) else startTurn(hand)
 
   private def stand(hand: Player): Unit =
@@ -401,11 +402,19 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
         broadcastTable() // everybody sees the card drawn for the absent player
         playForAbsent(hand)
 
-  /** Ends the hand. Its money goes to the next hand of the same player, if any, so that every hand can afford to double
-   * down, then the turn passes on. */
+  /** Ends the hand. Its money goes to the next hand of the same player that still has a bet, so that every hand can
+   * afford to double down and the money comes back to the player at the payout, then the turn passes on. A hand already
+   * paid has no bet: money left on it would be lost when the split hands are removed. */
   private def endTurn(hand: Player): Unit =
-    game.transferBalance(hand)
+    val laterHands = game.players.dropWhile(_ != hand).drop(1).filter(later => ownerName(later) == ownerName(hand))
+    laterHands.find(hasBet).foreach(next => moveMoney(from = hand, to = next))
     nextTurn(nextToPlay(after = hand))
+
+  private def moveMoney(from: Player, to: Player): Unit =
+    val money = from.balance.totalValue
+    if money > 0 then
+      from.withdraw(money)
+      to.deposit(money)
 
   /** Every player has played, so the dealer plays by the rules, the bets are settled and the hand ends.
    * The sequence runs in one go in the single writer, so no client message can slip in between the reveal and the payout. */

@@ -600,6 +600,22 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     // 100 - 10 - 10 (the two bets) + 25 (the blackjack); the second hand loses and has no money of its own
     handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 25))
 
+  test("a blackjack of the new hand after a split is paid at once, and the money comes back to the player"):
+    // Alice 10+10 splits: the first hand gets a six, the new one an ace (paid at once, the dealer shows a nine); the first
+    // hand draws a four (20) and stands; the dealer 9+10 stands at 19
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Ten, Value.Ten, Value.Six, Value.Ace, Value.Four)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Hit)
+    dealt.onMessage(alice, Stand)
+    // 100 - 10 - 10 + 25 (the blackjack) + 20 (the first hand wins)
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 25 + 20))
+
+  test("the money of a player whose first hand busts after a split is not lost on the hand already paid"):
+    val (dealt, alice) = aliceDealt(Value.Ten, Value.Nine, Value.Ten, Value.Ten, Value.Six, Value.Ace, Value.Nine)
+    dealt.onMessage(alice, Split)
+    dealt.onMessage(alice, Hit) // 10 + 6 + 9: busted
+    handResults(alice) shouldBe List(("Alice", DefaultBalance - 20 + 25))
+
   test("a player who leaves after a split takes all the hands away"):
     // Alice 8+8, Bob 9+7, dealer 10 and a hidden 6; the split draws a three and a two
     val (dealt, alice, bob) = aliceAndBobWith(Value.Eight, Value.Nine, Value.Ten, Value.Eight, Value.Seven,
