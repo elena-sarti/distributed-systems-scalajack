@@ -106,7 +106,8 @@ a table.
   paused until the lobby is back. The lobby is not replicated: it remains a single point of failure for entering the
   tables and for the failover, but not for the hands in progress between two healthy replicas.
 - When the clients lose the connection with the primary, they ask the lobby where the table is now and reconnect to the
-  new primary with the same session token.
+  new primary with the same session token. A crashed primary closes the connection; a frozen or isolated one does not,
+  so the client pings its table too and takes the connection as lost after 6 s without an answer.
 - The logical table keeps the same id after the failover, so the "sitting at this table" marks in the database stay
   valid. The new primary must therefore not free the players at start-up, as a table that starts from scratch does.
 - Only the primary of the current epoch writes the balances to the database, and only for transitions already
@@ -249,5 +250,64 @@ blackjack of online casinos. What the table decides for a late player:
 Every request is preceded by `TimeToDecide(seconds)`, the time left before the table decides. It is a number of seconds
 and not a time of day, so that the client counts down with its own clock: the clocks of the client and of the table
 node never have to agree. When a player sits down while the others are betting, the time to bet starts again for
-everybody, so that the newcomer has all of it too (the players who have not bet yet are asked again with the new time). The client shows the countdown under the question and withdraws the question when the time is over: an answer
-typed too late is never sent.
+everybody, so that the newcomer has all of it too (the players who have not bet yet are asked again with the new time).
+The client shows the countdown under the question and withdraws the question when the time is over: an answer typed
+too late is never sent.
+
+## The money of the players: deposit and withdrawal in the lobby (G2, G3, G4)
+
+A new account starts with no fiches. After logging in the player is in the lobby, where they can see their balance,
+deposit, withdraw and ask for a seat (`/balance`, `/deposit`, `/withdraw`, `/assign`, all with the session token).
+
+- **The balance has one owner at a time.** While the player is not seated it belongs to the lobby, that is to the
+  database. While they are seated it belongs to the table, which takes it with `sitDown` and gives it back with
+  `standUp`. So a deposit or a withdrawal is refused (409) while the player is seated: the `standUp` of the table would
+  otherwise overwrite it (lost update). It is the same rule as "a user sits at one table at a time".
+- **Each movement is one atomic statement**:
+  `UPDATE users SET balance = balance + ? WHERE ... AND table_id IS NULL AND balance + ? >= 0`. The condition is at once
+  the lock (nobody is seated) and the guard (the balance never goes below zero), so two concurrent requests can never
+  both pass a check made on a stale balance. When no row changes, a read tells why (unknown user, seated, not enough
+  fiches).
+- **Amounts are exact**: `NUMERIC(12, 2)` in the database and `BigDecimal` in the code. An amount must be positive,
+  not above 1,000,000 and a multiple of 0.5, the smallest fiche: the tables hold the money as fiches, and a balance
+  with cents could not be seated (the table refused it and the player stayed marked as seated).
+- **No seat below the minimum bet.** `/assign` refuses (403) a player with less than the minimum bet before taking a
+  seat or starting a new table. The table checks again when the player joins.
+- **Leaving a table.** The table frees the seat and gives the balance back a moment after the player leaves, and only
+  at the end of the hand if the player leaves during one. The client waits briefly for that before showing the lobby;
+  until then the lobby still shows the balance from before the table and refuses to move it.
+
+## What the tests of the whole system changed (H1)
+
+The system was played end to end, by hand and by bots checking every hand against the rules, with its nodes killed,
+frozen and restarted. What it showed, and what changed:
+
+- **Seat reservations.** The lobby reserves a seat for every player it sends to a table, because the table reports its
+  free seats only with its heartbeats. The reservation used to stay for its whole 10 s even after the player sat down,
+  so the player counted twice and the lobby answered "full" with seats free (or would start a new table). Now the seats
+  a heartbeat shows as taken use up as many reservations, the oldest first.
+- **The client has a failure detector.** See the consequences above: without it a client of a frozen primary waited
+  for it even after the backup had been promoted.
+- **Fail fast at start-up.** A table node that cannot listen on its WebSocket port exits, instead of staying alive with
+  its health endpoint answering; and it can take its port back right after a crash (`SO_REUSEADDR`).
+- **Money of a split hand.** A split hand with 21 in two cards is paid at once; the payout stayed on the split hand,
+  which is removed at the end of the hand, so the player lost it. The table now gives that money to the player's hand,
+  and at the end of a turn passes the money on only to a hand that still has a bet. The fix is in the table: the rules
+  of the first version (the `model` module) are unchanged.
+- **Amounts made of fiches.** Deposits and withdrawals are multiples of 0.5 (see G2-G4).
+
+`sbt "demo/runMain demo.EndToEnd"` starts the deployment from an empty database and checks registration, login,
+deposit and withdrawal, a whole hand (bet, play, results checked against the rules, leaving), two players at the same
+table and the refusal of forged tokens.
+
+## Deployment (H2)
+
+- `docker compose up --build` needs nothing else: every variable has a default good for local runs, and `.env` (see
+  `.env.example`) overrides it. A real deployment must set at least `POSTGRES_PASSWORD` and `SESSION_SECRET`.
+- Every node has a health check on its `/health` endpoint, so Docker shows whether it is up and `up --wait` waits for it.
+  A table waits for its lobby to be healthy before starting.
+- The database and the lobby restart by themselves (`restart: unless-stopped`). The tables do not: their failures are
+  handled by their backups, and the failure demo kills them on purpose.
+- The image is built in two stages (sbt, then only a JRE with the jar). The libraries stay in a cache of Docker between
+  builds, and `.env` never enters the image. Each node keeps a heap of 256 MB (`JAVA_OPTS`): up to eight nodes run on
+  one machine.

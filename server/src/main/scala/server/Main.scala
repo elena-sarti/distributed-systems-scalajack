@@ -75,9 +75,7 @@ object Main:
           health.stop()
         health.start()
         monitor.foreach(_.start())
-        endpoint.foreach: e =>
-          e.start()
-          println(s"WebSocket endpoint listening on port ${config.wsPort}")
+        endpoint.foreach(startEndpoint(_, config.wsPort))
         watchedPeers(config).foreach(peers.watch) // from now on each of them has one timeout to show up
         announcer.foreach(_.start()) // only now the table can really accept the players the lobby will send
         liveness.foreach(_.start())
@@ -180,8 +178,7 @@ object Main:
     val logic    = TableTakeover.resume(snapshot, cashier, config.returnWindow.toMillis.millis)
     val table    = SingleWriterHandler(logic)
     val endpoint = TableEndpoint(config.wsPort, table, tokens)
-    endpoint.start()
-    println(s"WebSocket endpoint listening on port ${config.wsPort}")
+    startEndpoint(endpoint, config.wsPort)
     // registering replaces the entry of the failed primary: from now on the lobby sends the players to this node
     val announcer = config.lobbyUrl.map(url => heartbeatSender(config, observed(url, peers, () => Some(epoch)), logic))
     announcer.foreach(_.start())
@@ -233,6 +230,13 @@ object Main:
       LobbyApi.DepositPath         -> FundsEndpoint("Deposit", tokens, funds.deposit),
       LobbyApi.WithdrawPath        -> FundsEndpoint("Withdrawal", tokens, funds.withdraw)
     )
+
+  /** A table that cannot listen for its players is of no use: the process ends, so that it does not look alive (the health
+   * endpoint would still answer) and whoever runs it can start it again. */
+  private def startEndpoint(endpoint: TableEndpoint, port: Int): Unit =
+    try endpoint.start()
+    catch case NonFatal(error) => fail(s"Cannot listen for the players on port $port: ${error.getMessage}")
+    println(s"WebSocket endpoint listening on port $port")
 
   private def fail(message: String): Nothing =
     System.err.println(message)

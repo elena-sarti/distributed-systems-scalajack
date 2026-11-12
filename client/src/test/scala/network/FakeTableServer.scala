@@ -1,6 +1,7 @@
 package network
 
 import org.java_websocket.WebSocket
+import org.java_websocket.framing.Framedata
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
 import java.net.{InetSocketAddress, URI}
@@ -19,6 +20,8 @@ final class FakeTableServer:
   @volatile var lastAuthorization: Option[String] = None
   /** What the server answers to a message from a client, if anything (by default it answers nothing). */
   @volatile var reply: String => Option[String] = _ => None
+  /** Whether the server answers the pings of its clients, as a live node does: false plays a frozen node. */
+  @volatile var answersPings: Boolean = true
 
   private val server = new WebSocketServer(InetSocketAddress(0)): // port 0: free port chosen by the OS
     override def onStart(): Unit = started.countDown()
@@ -30,6 +33,8 @@ final class FakeTableServer:
       received.offer(text)
       reply(text).foreach(socket.send)
     override def onError(socket: WebSocket, error: Exception): Unit = ()
+    override def onWebsocketPing(socket: WebSocket, ping: Framedata): Unit =
+      if answersPings then super.onWebsocketPing(socket, ping)
 
   def start(): Unit =
     server.start()

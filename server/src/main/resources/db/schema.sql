@@ -15,6 +15,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users (lower(username
 -- The money of every user, kept between sessions. A new user starts with no money and has to deposit some to play.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS balance NUMERIC(12, 2) NOT NULL DEFAULT 0;
 
+-- For a database created when new users started with 100: only the default changes, the stored balances stay.
 ALTER TABLE users ALTER COLUMN balance SET DEFAULT 0;
 
 -- The table where the user is sitting, NULL when none. A user sits at one table at a time, so two

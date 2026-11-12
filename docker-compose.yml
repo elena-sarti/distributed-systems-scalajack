@@ -1,6 +1,16 @@
+# Nothing has to be set up before `docker compose up --build`: every variable has a default good for local runs.
+# A .env file (see .env.example) overrides them; a real deployment sets at least POSTGRES_PASSWORD and SESSION_SECRET.
+
 x-backend: &backend
   image: scalajack-backend
   pull_policy: never   # the image is built locally, never downloaded
+  # a node is healthy when it answers on its HTTP port: Docker shows it, and `up --wait` waits for it
+  healthcheck:
+    test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+    interval: 5s
+    timeout: 3s
+    start_period: 60s   # the time a JVM may take to start on a slow machine
+    retries: 6
 
 # What the lobby and the tables have in common: the database (the users and their balances) and the
 # secret that signs the session tokens. Written once, so the nodes cannot end up with different values.
@@ -9,7 +19,7 @@ x-node-environment: &node-environment
   # for a database that does not answer.
   DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}?connectTimeout=5&socketTimeout=10
   DB_USER: ${POSTGRES_USER:-scalajack}
-  DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:-scalajack-local-password}
   # the default is only for local runs: a real deployment sets its own SESSION_SECRET in .env
   SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
 
@@ -45,7 +55,7 @@ x-table-depends: &table-depends
   db:               # the balances are in the database
     condition: service_healthy
   lobby:            # it can start before the lobby is ready anyway (it retries), but this avoids useless attempts
-    condition: service_started
+    condition: service_healthy
 
 # The lobby starts more tables when all are full, up to the three below. `docker compose up` starts only
 # table-1; table-2 and table-3 belong to the profile "pool", so they are not started by it. They must
@@ -56,10 +66,11 @@ x-table-depends: &table-depends
 services:
   db:
     image: postgres:16
+    restart: unless-stopped   # the database and the lobby come back by themselves; the tables have their backups
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scalajack}
       POSTGRES_USER: ${POSTGRES_USER:-scalajack}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scalajack-local-password}
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
@@ -71,6 +82,7 @@ services:
   lobby:
     <<: *backend
     build: . # the only service that builds the image
+    restart: unless-stopped
     environment:
       <<: *node-environment
       NODE_ROLE: lobby

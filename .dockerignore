@@ -2,5 +2,7 @@
 .idea
 .bsp
 .metals
+.env
+docs
 **/target
 *.jar

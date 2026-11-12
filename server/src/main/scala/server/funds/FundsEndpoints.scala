@@ -3,6 +3,7 @@ package server.funds
 import protocol.LobbyApi
 import protocol.LobbyApi.{AmountRequest, ApiError, BalanceRequest, Funds}
 import server.auth.{AuthenticatedEndpoint, SessionTokens}
+import utils.ModelExports.Fiche
 
 /** `POST /deposit` and `POST /withdraw`: the request and the answers are the same, only the operation changes, so it is a
  * parameter. Answers 200 with the new balance, or 400, 404 or 409 with the reason.
@@ -19,7 +20,7 @@ final class FundsEndpoint(operation: String, tokens: SessionTokens, move: (Strin
     FundsEndpoint.answer(move(username, request.amount))
 
 object FundsEndpoint:
-  val InvalidAmount     = s"The amount must be a positive number of fiches, with at most two decimals, up to ${FundsService.MaxAmount.toLong}"
+  val InvalidAmount     = s"The amount must be a positive multiple of ${Fiche.smallestDenomination} fiches, up to ${FundsService.MaxAmount.toLong}"
   val UnknownUser       = "This user does not exist"
   val SeatedAtTable     = "You are sitting at a table: leave it before moving your money"
   val InsufficientFunds = "Your balance is lower than the amount to withdraw"

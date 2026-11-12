@@ -51,7 +51,7 @@ class FundsEndpointsTest extends AnyFunSuite with BeforeAndAfterEach:
     LobbyApi.decode[Funds](balance().body()) shouldBe Right(Funds(0.0))
 
   test("an invalid amount gets 400 and nothing moves"):
-    List(0.0, -1.0, 0.001, FundsService.MaxAmount + 1).foreach: amount =>
+    List(0.0, -1.0, 0.001, 22.34, FundsService.MaxAmount + 1).foreach: amount =>
       val response = deposit(amount)
       response.statusCode() shouldBe 400
       reason(response) shouldBe FundsEndpoint.InvalidAmount
