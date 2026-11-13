@@ -4,7 +4,7 @@ package server.db
  *
  * @param url      the JDBC url.
  * @param user     the database user.
- * @param password the database password, hidden by [[toString]] so it cannot leak in the logs.
+ * @param password the database password, hidden by toString so it cannot leak in the logs.
  */
 final case class DbConfig(url: String, user: String, password: String):
   override def toString: String = s"DbConfig(url=$url, user=$user, password=***)"

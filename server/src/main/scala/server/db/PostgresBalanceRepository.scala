@@ -17,8 +17,8 @@ final class PostgresBalanceRepository(database: Database) extends BalanceReposit
   private val StandUpSql =
     "UPDATE users SET balance = ?, table_id = NULL WHERE lower(username) = lower(?) AND table_id = ?"
 
-  // One statement for both directions: a deposit adds a positive `delta`, a withdrawal a negative one. The WHERE
-  // clause is the lock again (nobody is sitting) and also the guard of the balance (it cannot become negative).
+  //A deposit adds a positive `delta`, a withdrawal a negative one. The WHERE
+  // clause is the lock again and the guard of the balance.
   private val ChangeSql =
     """UPDATE users SET balance = balance + ?
       |WHERE lower(username) = lower(?) AND table_id IS NULL AND balance + ? >= 0

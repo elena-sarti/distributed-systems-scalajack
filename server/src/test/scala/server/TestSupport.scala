@@ -16,6 +16,6 @@ final class RecordingHandler(reply: (Connection, ClientMessage) => Unit = (_, _)
   def onDisconnected(connection: Connection): Unit = disconnected.put(connection)
 
 object TestSupport:
-  /** Takes the next element, failing the test (instead of hanging) if nothing arrives in time. */
+  /** Takes the next element, failing the test if nothing arrives in time. */
   def next[T](queue: BlockingQueue[T]): T =
     Option(queue.poll(5, TimeUnit.SECONDS)).getOrElse(throw AssertionError("Timed out waiting for an event"))

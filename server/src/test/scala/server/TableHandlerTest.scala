@@ -18,7 +18,7 @@ class TableHandlerTest extends AnyFunSuite with BeforeAndAfterEach:
     val inbox = ListBuffer[ServerMessage]()
     def send(message: ServerMessage): Unit = inbox += message
 
-  /** A cashier that gives each player the balance set by the test (100 by default) and records what the
+  /** A cashier that gives each player the balance set by the test and records what the
    * table gives back when they leave. */
   private final class RecordingCashier extends Cashier:
     var balances = Map.empty[String, Double]

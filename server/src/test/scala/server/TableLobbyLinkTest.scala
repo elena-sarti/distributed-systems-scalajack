@@ -7,8 +7,8 @@ import utils.ModelExports.Game
 import utils.TestExports.*
 import java.time.{Duration, Instant}
 
-/** The table side (announcer + HTTP gateway) talking to the real lobby endpoints, and the monitor
- * noticing when a table goes silent: the behaviour that E2 has to guarantee, from end to end. */
+/** The table side talking to the lobby endpoints and the monitor
+ * noticing when a table goes silent. */
 class TableLobbyLinkTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private val t0 = Instant.parse("2026-01-01T10:00:00Z")

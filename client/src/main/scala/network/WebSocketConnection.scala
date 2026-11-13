@@ -11,13 +11,13 @@ import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.*
 
-/** Opens a [[ServerConnection]] over WebSocket, using the JDK's built-in client. */
+/** Opens a connection over WebSocket, using the JDK's built-in client. */
 object WebSocketConnection:
   private val http           = HttpClient.newHttpClient() // shared: it owns threads, one is enough
   private val ConnectTimeout = JDuration.ofSeconds(5)
   private val CloseTimeout   = 2.seconds
 
-  /** The connection lives as long as the [[Resource]] is in use and is always closed afterward.
+  /** The connection lives as long as the Resource is in use and is always closed afterward.
    *
    * A table node that crashes closes the connection, but one that freezes or is cut off by the network says nothing:
    * so the client pings it every `pingEvery` and takes the connection as lost when nothing has come back for `silence`,
@@ -32,9 +32,9 @@ object WebSocketConnection:
       dispatcher <- Dispatcher.sequential[IO]
       // Where the callbacks put what happens on the connection and receive takes it from.
       events     <- Resource.eval(Queue.unbounded[IO, ConnectionEvent])
-      // Completed once, when the connection is over: lets `send` fail fast and `close` wait for the handshake.
+      // Completed once when the connection is over: lets send fail fast and close wait for the handshake.
       closed     <- Resource.eval(Deferred[IO, Unit])
-      // One permit: only one send at a time.
+      // One permit: only one send at a time
       writer     <- Resource.eval(Semaphore[IO](1))
       listener    = EventListener(dispatcher, events, closed)
       socket     <- Resource.make(open(uri, token, listener))(close(_, closed))
@@ -114,7 +114,7 @@ object WebSocketConnection:
         closed.complete(()).flatMap: firstTime =>
           IO.whenA(firstTime)(events.offer(ConnectionEvent.Disconnected(reason)))
 
-  /** The [[ServerConnection]] handed to the client code: a thin layer over the socket and the queue. */
+  /** The connection handed to the client code. */
   private final class WebSocketServerConnection(
                                                  socket: WebSocket,
                                                  events: Queue[IO, ConnectionEvent],

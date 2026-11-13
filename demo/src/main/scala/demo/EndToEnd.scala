@@ -10,7 +10,7 @@ import scala.util.control.NonFatal
 /** The end-to-end tests: the whole system of docker-compose.yml started from zero (an empty database) and used over
  * the network as the client uses it, from the registration to leaving the table.
  *
- * `sbt "demo/runMain demo.EndToEnd"` starts the deployment afresh: it deletes the database of the local deployment.
+ * sbt "demo/runMain demo.EndToEnd" starts the deployment afresh, so it deletes the database of the local deployment.
  * With `--running` it tests the deployment that is already running instead, at `--lobby <url>` if it is not the one of
  * docker-compose.yml. */
 object EndToEnd:

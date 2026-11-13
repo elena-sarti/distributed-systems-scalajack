@@ -44,7 +44,7 @@ object FundsService:
   /** The most that can be moved at once, well below what the `balance` column can hold. */
   val MaxAmount = 1_000_000.0
 
-  /** Whether the amount is finite, positive, not above [[MaxAmount]] and made of whole fiches: the tables hold the money
+  /** Whether the amount is finite, positive, not above MaxAmount and made of whole fiches: the tables hold the money
    * as fiches, the smallest of which is worth 0.5, and could not seat a player whose balance is not. */
   def isAmountValid(amount: Double): Boolean =
     amount.isFinite && amount > 0 && amount <= MaxAmount &&

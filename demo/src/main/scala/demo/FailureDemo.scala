@@ -5,7 +5,7 @@ import java.time.Duration
 import scala.collection.mutable.ListBuffer
 import scala.util.control.NonFatal
 
-/** What a scenario has observed: each expectation, met or not, with what was seen. */
+/** The report of a given scenario - each expectation with what was seen. */
 final class Report(val scenario: String):
   private val lines = ListBuffer.empty[(Boolean, String)]
 
