@@ -50,22 +50,20 @@ object WebSocketConnection:
       else ping >> watch(socket, listener, writer, pingEvery, silence)
 
   /** Starts the handshake. buildAsync returns immediately with a future: fromCompletableFuture
-   * turns it into an IO that suspends (without blocking a thread) until the connection is ready or fails. */
+   * turns it into an IO that suspends until the connection is ready or fails. */
   private def open(uri: URI, token: Option[String], listener: WebSocket.Listener): IO[WebSocket] =
     IO.fromCompletableFuture(IO:
       val builder = http.newWebSocketBuilder().connectTimeout(ConnectTimeout)
       token.foreach(value => builder.header("Authorization", s"Bearer $value"))
       builder.buildAsync(uri, listener))
 
-  /** Polite close: send a Close frame, give the server a moment to answer, then drop the socket anyway.
+  /** Polite close: send a Close frame, give the server a moment to answer, then drop the socket.
    * Errors while sending are ignored: if the connection is already gone there is nothing left to close. */
   private def close(socket: WebSocket, closed: Deferred[IO, Unit]): IO[Unit] =
     IO.fromCompletableFuture(IO(socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye"))).attempt *>
       closed.get.timeoutTo(CloseTimeout, IO.unit) *>
       IO(socket.abort())
 
-  /** Turns the JDK callbacks (invoked on JDK threads, at times we do not control)
-   * into [[ConnectionEvent]]s put in a queue. */
   private final class EventListener(dispatcher: Dispatcher[IO], events: Queue[IO, ConnectionEvent], closed: Deferred[IO, Unit])
     extends WebSocket.Listener:
 

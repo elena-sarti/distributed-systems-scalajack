@@ -18,7 +18,7 @@ final class FakeTableServer:
 
   /** The `Authorization` header of the last handshake, if it had one. */
   @volatile var lastAuthorization: Option[String] = None
-  /** What the server answers to a message from a client, if anything (by default it answers nothing). */
+  /** What the server answers to a message from a client, if anything. */
   @volatile var reply: String => Option[String] = _ => None
   /** Whether the server answers the pings of its clients, as a live node does: false plays a frozen node. */
   @volatile var answersPings: Boolean = true
