@@ -10,7 +10,7 @@ import scala.concurrent.duration.*
 
 class TableReconnectionTest extends AnyFunSuite:
 
-  /** A lobby that gives the answers of the script, one per request (the last one again when the script is over). */
+  /** A lobby that gives the answers of the script, one per request. */
   private final class ScriptedLobby(script: LocateAnswer*) extends LobbyConnection:
     private val answers = Ref.unsafe[IO, List[LocateAnswer]](script.toList)
     val tokens          = Ref.unsafe[IO, List[String]](Nil)

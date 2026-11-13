@@ -4,8 +4,8 @@ import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import java.util.concurrent.atomic.AtomicInteger
 import scala.util.Using
 
-/** A real PostgreSQL for the tests, started on demand (no Docker needed) and shared by the whole test run.
- * Every test suite gets its own empty database, so suites running in parallel never see each other's data. */
+/** A real PostgreSQL for the tests: every test suite gets its own empty database,
+ * so suites running in parallel never see each other's data. */
 object TestPostgres:
   private val AdminUser = "postgres"
 

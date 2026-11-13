@@ -10,7 +10,7 @@ import java.time.Instant
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
-/** F7: after a take over the players come back to their seats and go on from where they were. */
+/** After a take over the players come back to their seats and go on from where they were. */
 class TableHandlerResumeTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private val t0 = Instant.parse("2026-01-01T00:00:00Z")

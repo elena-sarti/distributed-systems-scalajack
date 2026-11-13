@@ -2,8 +2,7 @@ package server.auth
 
 import server.db.{BalanceRepository, CreateUserError, FundsError, SitDownError, User, UserRepository}
 
-/** The users table in memory, with the same rules as the PostgreSQL one (usernames unique ignoring the
- * case, one table at a time, money moved only while nobody is sitting), so the logic that uses it can be tested without a database. */
+/** The users table in memory so the logic that uses it can be tested without a database. */
 final class InMemoryUserRepository extends UserRepository, BalanceRepository:
   private final case class Row(user: User, balance: Double, tableId: Option[String])
 

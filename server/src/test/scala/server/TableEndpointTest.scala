@@ -19,7 +19,7 @@ class TableEndpointTest extends AnyFunSuite:
 
   private def connect(endpoint: TableEndpoint): TestWsClient = connectAs("Alice", endpoint)
 
-  /** Tries to connect with the given token (or none): the handshake must be refused. */
+  /** Tries to connect with the given token, the handshake must be refused. */
   private def refused(endpoint: TableEndpoint, token: Option[String]): Unit =
     intercept[ExecutionException](TestWsClient(URI.create(s"ws://localhost:${endpoint.boundPort}"), token))
 

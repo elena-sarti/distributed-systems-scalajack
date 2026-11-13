@@ -9,11 +9,11 @@ import server.{Cashier, Connection, TableHandler}
 import java.time.Instant
 import scala.collection.mutable.ListBuffer
 
-/** The primary is tested with the backup in memory: the replicator stores the updates straight into a
- * [[BackupReplica]], and can be made to fail as if the backup could not be reached. */
+/** The primary is tested with the backup in memory - the replicator stores the updates in a
+ * replica and can be made to fail as if the backup could not be reached. */
 class ReplicatedTableTest extends AnyFunSuite with BeforeAndAfterEach:
 
-  /** Everything that leaves the primary, in order: messages, balances saved, updates sent to the backup. */
+  /** Everything that leaves the primary - messages, balances saved, updates sent to the backup. */
   private var log: ListBuffer[String] = _
 
   private final class FakeConnection(val id: String) extends Connection:

@@ -11,12 +11,12 @@ import protocol.{ClientMessage, ServerMessage}
 enum ConnectionEvent:
   /** A valid message from the table node. */
   case Received(message: ServerMessage)
-  /** A frame that is not a valid [[ServerMessage]]: reported, never thrown, as network data is untrusted. */
+  /** A frame that is not a valid message. */
   case Invalid(reason: String)
-  /** The connection is over. Nothing will follow. */
+  /** The connection is over. */
   case Disconnected(reason: String)
 
-/** Raised by [[ServerConnection.send]] when the connection is already over. */
+/** Raised by ServerConnection.send when the connection is already over. */
 final class ConnectionClosedException extends RuntimeException("The connection with the table is closed")
 
 /** The client's view of the network.
@@ -28,12 +28,9 @@ final class ConnectionClosedException extends RuntimeException("The connection w
 trait ServerConnection:
 
   /** Sends a request to the table. The IO completes when the message has been handed
-   * over for sending, not when the server has processed it: the answer arrives via [[receive]].
-   *
-   * Fails with [[ConnectionClosedException]] if the connection is over. */
+   * over for sending, not when the server has processed it: the answer arrives via receive. */
   def send(message: ClientMessage): IO[Unit]
 
-  /** Waits for the next event, suspending the caller until one is available.
-   * After [[ConnectionEvent.Disconnected]] it keeps returning it. */
+  /** Waits for the next event, suspending the caller until one is available. */
   def receive: IO[ConnectionEvent]
 

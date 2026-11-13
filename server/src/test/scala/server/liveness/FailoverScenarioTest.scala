@@ -9,8 +9,8 @@ import utils.TestExports.*
 import java.time.{Duration, Instant}
 import scala.collection.mutable.ListBuffer
 
-/** F4 from end to end: the primary crashes, the backup (over real HTTP, with the real lobby endpoint) is promoted, and
- * the players are sent to its node. The clock is moved by the test. */
+/** The primary crashes, the backup is promoted, and
+ * the players are sent to its node. */
 class FailoverScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
 
   private val t0      = Instant.parse("2026-01-01T10:00:00Z")

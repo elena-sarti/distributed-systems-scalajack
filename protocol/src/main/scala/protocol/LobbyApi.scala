@@ -10,61 +10,61 @@ import scala.util.Try
  */
 object LobbyApi:
 
-  /** `POST` a [[RegisterRequest]]: answered by [[Registered]] or [[ApiError]]. */
+  /** `POST` a RegisterRequest: answered by Registered or ApiError. */
   val RegisterPath = "/register"
 
-  /** `POST` a [[LoginRequest]]: answered by [[LoggedIn]] or [[ApiError]]. */
+  /** `POST` a LoginRequest: answered by LoggedIn or ApiError. */
   val LoginPath = "/login"
 
-  /** `POST` a [[TableRegistration]]: answered by [[TableAck]] or [[ApiError]]. */
+  /** `POST` a TableRegistration: answered by TableAck or ApiError. */
   val TableRegisterPath = "/tables/register"
 
-  /** `POST` a [[TableHeartbeat]]: answered by [[TableAck]], or by an
-   * [[ApiError]] with status 404 if the lobby does not know the table. */
+  /** `POST` a TableHeartbeat: answered by TableAck, or by an
+   * ApiError with status 404 if the lobby does not know the table. */
   val TableHeartbeatPath = "/tables/heartbeat"
 
-  /** `POST` a [[BackupHeartbeat]]: answered by [[TableAck]] or by an
-   * [[ApiError]]. The lobby learns about a backup from its first heartbeat - it never receives seats. */
+  /** `POST` a BackupHeartbeat: answered by TableAck or by an
+   * ApiError. The lobby learns about a backup from its first heartbeat - it never receives seats. */
   val BackupHeartbeatPath = "/replicas/heartbeat"
 
-  /** `POST` a [[PromotionRequest]]:
-   * answered by 200 and a [[PromotionGranted]],
-   * by 409 and an [[ApiError]] if the lobby does not agree,
+  /** `POST` a PromotionRequest:
+   * answered by 200 and a PromotionGranted,
+   * by 409 and an ApiError if the lobby does not agree,
    * or by 404 if the table is unknown. */
   val PromotionPath = "/tables/promote"
 
-  /** `POST` an [[ExclusionRequest]]: answered by
-   * 200 and an [[ExclusionGranted]],
-   * by 409 and an [[ApiError]] if the epoch is not newer than the current one,
+  /** `POST` an ExclusionRequest: answered by
+   * 200 and an ExclusionGranted,
+   * by 409 and an ApiError if the epoch is not newer than the current one,
    * by 404 if the table is unknown. */
   val ExclusionPath = "/tables/exclude-backup"
 
-  /** `POST` a [[StartRequest]] : answered
-   * by 200 and a [[StartGranted]],
-   * or by 409 and an [[ApiError]] while another node is playing the table. */
+  /** `POST` a StartRequest : answered
+   * by 200 and a StartGranted,
+   * or by 409 and an ApiError while another node is playing the table. */
   val StartPath = "/tables/start"
 
-  /** `POST` a [[LocateRequest]]: answered
-   * by 200 and a [[TableAddress]],
-   * by 404 and an [[ApiError]] if the seat has been given up,
-   * by 503 and an [[ApiError]] if the table is not reachable yet,
+  /** `POST` a LocateRequest: answered
+   * by 200 and a TableAddress,
+   * by 404 and an ApiError if the seat has been given up,
+   * by 503 and an ApiError if the table is not reachable yet,
    * or by 401 if the token is invalid */
   val LocatePath = "/locate"
 
-  /** `POST` an [[AssignRequest]]: answered
-   * by 200 and a [[TableAddress]],
-   * by 202 and a [[TableStarting]] if a new table is starting so there is no seat yet,
+  /** `POST` an AssignRequest: answered
+   * by 200 and a TableAddress,
+   * by 202 and a TableStarting if a new table is starting so there is no seat yet,
    * by 401 (invalid token), 403 (the balance is below the minimum bet: deposit first) or 503 (server full, or a new
-   * table could not be started) and an [[ApiError]]. */
+   * table could not be started) and an ApiError. */
   val AssignPath = "/assign"
 
-  /** `POST` a [[BalanceRequest]]: the balance the player has now. */
+  /** `POST` a BalanceRequest: the balance the player has now. */
   val BalancePath = "/balance"
 
-  /** `POST` an [[AmountRequest]]: adds the amount to the balance. */
+  /** `POST` an AmountRequest: adds the amount to the balance. */
   val DepositPath = "/deposit"
 
-  /** `POST` an [[AmountRequest]]: takes the amount from the balance. */
+  /** `POST` an AmountRequest: takes the amount from the balance. */
   val WithdrawPath = "/withdraw"
 
   final case class RegisterRequest(username: String, password: String) derives ReadWriter:

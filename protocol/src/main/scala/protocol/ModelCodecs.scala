@@ -3,11 +3,7 @@ package protocol
 import upickle.default.{ReadWriter, macroRW, readwriter}
 import utils.ModelExports.{PlayerState, StandardCard, Suit, Value}
 
-/** JSON (de)serializers for the model types that travel inside the protocol messages.
- *
- * They live here, and not in the model, so that the model stays a pure domain module
- * with no knowledge of how (and whether) it is sent over the network.
- */
+/** JSON (de)serializers for the model types that travel inside the protocol messages. */
 object ModelCodecs:
 
   // Simple enums (only singleton cases) are written as the plain name of the case("Hearts").

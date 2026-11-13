@@ -11,13 +11,13 @@ import java.util.concurrent.CompletionStage
 import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.*
 
-/** Opens a [[ServerConnection]] over WebSocket, using the JDK's built-in client. */
+/** Opens a connection over WebSocket, using the JDK's built-in client. */
 object WebSocketConnection:
   private val http           = HttpClient.newHttpClient() // shared: it owns threads, one is enough
   private val ConnectTimeout = JDuration.ofSeconds(5)
   private val CloseTimeout   = 2.seconds
 
-  /** The connection lives as long as the [[Resource]] is in use and is always closed afterward.
+  /** The connection lives as long as the Resource is in use and is always closed afterward.
    *
    * A table node that crashes closes the connection, but one that freezes or is cut off by the network says nothing:
    * so the client pings it every `pingEvery` and takes the connection as lost when nothing has come back for `silence`,
@@ -32,9 +32,9 @@ object WebSocketConnection:
       dispatcher <- Dispatcher.sequential[IO]
       // Where the callbacks put what happens on the connection and receive takes it from.
       events     <- Resource.eval(Queue.unbounded[IO, ConnectionEvent])
-      // Completed once, when the connection is over: lets `send` fail fast and `close` wait for the handshake.
+      // Completed once when the connection is over: lets send fail fast and close wait for the handshake.
       closed     <- Resource.eval(Deferred[IO, Unit])
-      // One permit: only one send at a time.
+      // One permit: only one send at a time
       writer     <- Resource.eval(Semaphore[IO](1))
       listener    = EventListener(dispatcher, events, closed)
       socket     <- Resource.make(open(uri, token, listener))(close(_, closed))
@@ -50,22 +50,20 @@ object WebSocketConnection:
       else ping >> watch(socket, listener, writer, pingEvery, silence)
 
   /** Starts the handshake. buildAsync returns immediately with a future: fromCompletableFuture
-   * turns it into an IO that suspends (without blocking a thread) until the connection is ready or fails. */
+   * turns it into an IO that suspends until the connection is ready or fails. */
   private def open(uri: URI, token: Option[String], listener: WebSocket.Listener): IO[WebSocket] =
     IO.fromCompletableFuture(IO:
       val builder = http.newWebSocketBuilder().connectTimeout(ConnectTimeout)
       token.foreach(value => builder.header("Authorization", s"Bearer $value"))
       builder.buildAsync(uri, listener))
 
-  /** Polite close: send a Close frame, give the server a moment to answer, then drop the socket anyway.
+  /** Polite close: send a Close frame, give the server a moment to answer, then drop the socket.
    * Errors while sending are ignored: if the connection is already gone there is nothing left to close. */
   private def close(socket: WebSocket, closed: Deferred[IO, Unit]): IO[Unit] =
     IO.fromCompletableFuture(IO(socket.sendClose(WebSocket.NORMAL_CLOSURE, "bye"))).attempt *>
       closed.get.timeoutTo(CloseTimeout, IO.unit) *>
       IO(socket.abort())
 
-  /** Turns the JDK callbacks (invoked on JDK threads, at times we do not control)
-   * into [[ConnectionEvent]]s put in a queue. */
   private final class EventListener(dispatcher: Dispatcher[IO], events: Queue[IO, ConnectionEvent], closed: Deferred[IO, Unit])
     extends WebSocket.Listener:
 
@@ -114,7 +112,7 @@ object WebSocketConnection:
         closed.complete(()).flatMap: firstTime =>
           IO.whenA(firstTime)(events.offer(ConnectionEvent.Disconnected(reason)))
 
-  /** The [[ServerConnection]] handed to the client code: a thin layer over the socket and the queue. */
+  /** The connection handed to the client code. */
   private final class WebSocketServerConnection(
                                                  socket: WebSocket,
                                                  events: Queue[IO, ConnectionEvent],
