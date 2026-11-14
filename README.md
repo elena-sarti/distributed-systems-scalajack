@@ -26,6 +26,14 @@ The only requirement is Docker. Start the server, then run the client, downloada
 docker compose up --build
 java -jar scalajack-client.jar
 ```
+By default the tables announce `localhost` to the clients, so everyone must play on the machine that runs Docker.
+To play from other computers on the same network, set `PUBLIC_HOST` in `.env` to the IP address of the server
+machine, start it with `docker compose up --build`, make sure ports 9080, 9091-9093 and 9191-9193 are reachable and give the lobby address to the client:
+```bash
+java -jar scalajack-client.jar http://<server-ip>:9080
+```
+The address can also be set with the environment variable `SCALAJACK_LOBBY`.
+
 The client asks to register or log in, then shows the lobby: deposit some fiches (a new account has none, and a table
 needs at least the minimum bet of 5), sit at a table and play. Every decision has 30 seconds, a player who does not
 answer follows a default behavior (ask until 12 then stand). On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards.
@@ -42,8 +50,8 @@ docker compose --profile pool up --no-start
 Without it the deployment works the same with one table, and the eighth player is told the server is full.
 
 ### Configuration
-Nothing has to be configured for a local run. A `.env` file (see [.env.example](.env.example)) overrides the defaults:
-the database credentials, the secret that signs the session tokens (`SESSION_SECRET`), the heartbeat period and timeout
+Nothing has to be configured for a local run. A `.env` file overrides the defaults:
+`PUBLIC_HOST`, the database credentials, the secret that signs the session tokens (`SESSION_SECRET`), the heartbeat period and timeout
 and how long a promoted node waits for the players of the failed primary (`RETURN_WINDOW_SECONDS`). Changing the
 database password after the first start needs a new database: `docker compose down -v`.
 
