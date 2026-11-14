@@ -27,12 +27,15 @@ docker compose up --build
 java -jar scalajack-client.jar
 ```
 By default the tables announce `localhost` to the clients, so everyone must play on the machine that runs Docker.
-To play from other computers on the same network, set `PUBLIC_HOST` in `.env` to the IP address of the server
-machine, start it with `docker compose up --build`, make sure ports 9080, 9091-9093 and 9191-9193 are reachable and give the lobby address to the client:
+To play from other computers on the same network:
+1. on the machine that runs Docker, set `PUBLIC_HOST` in `.env` to its IP address on the network (on Windows
+   `ipconfig` shows it as IPv4 Address) and start the server with `docker compose up --build`.
+2. run the client with the address of the lobby (it can also be set with the environment variable `SCALAJACK_LOBBY`):
 ```bash
 java -jar scalajack-client.jar http://<server-ip>:9080
 ```
-The address can also be set with the environment variable `SCALAJACK_LOBBY`.
+On the machine that runs Docker the client also works without arguments, as in a local run.
+The ports 9080, 9091-9093 and 9191-9193 of the server machine must be reachable.
 
 The client asks to register or log in, then shows the lobby: deposit some fiches (a new account has none, and a table
 needs at least the minimum bet of 5), sit at a table and play. Every decision has 30 seconds, a player who does not
