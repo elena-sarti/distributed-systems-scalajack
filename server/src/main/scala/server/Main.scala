@@ -28,7 +28,7 @@ object Main:
         val backups  = FailureDetector[String](config.heartbeat.timeout, LoggingFailureListener("lobby", id => s"the backup of table $id"))
         val peers    = FailureDetector[Peer](config.heartbeat.timeout, LoggingFailureListener(s"${config.role.toString.toLowerCase} ${config.tableId}"))
         val replica  = BackupReplica() // only used by the backup: the last state sent by its table
-        // what a backup starts when it becomes the primary (F4): to be stopped at shutdown like the rest
+        // what a backup starts when it becomes the primary: to be stopped at shutdown like the rest
         val stoppers = ConcurrentLinkedQueue[() => Unit]()
         // only a backup that knows the lobby can be promoted: the lobby is the third vote
         val promoter = Option.when(config.role == NodeRole.Backup)(config.lobbyUrl).flatten.map: url =>

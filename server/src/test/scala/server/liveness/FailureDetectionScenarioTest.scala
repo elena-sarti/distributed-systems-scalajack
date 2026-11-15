@@ -8,7 +8,7 @@ import server.{HealthServer, HeartbeatResult, HttpLobbyGateway, NodeRole}
 import utils.TestExports.*
 import java.time.{Duration, Instant}
 
-/** F3 from end to end: real HTTP between the nodes, a clock that the test moves. For each pair of nodes, a node
+/** Failure detection from end to end: real HTTP between the nodes, a clock that the test moves. For each pair of nodes, a node
  * that stops is signalled by the other within the timeout, and not before. */
 class FailureDetectionScenarioTest extends AnyFunSuite with BeforeAndAfterEach:
 

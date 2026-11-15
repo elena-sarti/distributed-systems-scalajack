@@ -120,7 +120,7 @@ class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
     pool.awaitTermination(10, TimeUnit.SECONDS) shouldBe true
     registry.find("table-1").map(_.freeSeats).get should (be >= 0 and be <= Capacity)
 
-  // ---- heartbeats (E2): the registry remembers when each table was last heard from ----
+  // ---- heartbeats: the registry remembers when each table was last heard from ----
 
   private val t0 = Instant.parse("2026-01-01T10:00:00Z")
 
@@ -160,7 +160,7 @@ class TableRegistryTest extends AnyFunSuite with BeforeAndAfterEach:
     registry.register("table-1", "h", 1, t0.plusSeconds(100)).value
     registry.markSilentUnavailable(t0.plusSeconds(50)) shouldBe empty
 
-  // ---- seat reservations (E3): a seat given to a player stays taken until the table reports it ----
+  // ---- seat reservations: a seat given to a player stays taken until the table reports it ----
 
   private val hold = Duration.ofSeconds(10)
 
