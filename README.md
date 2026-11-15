@@ -5,8 +5,6 @@ ScalaJack is the game of **Blackjack** played online from the command line, writ
 computed by a Prolog theory. It started as a local game for one terminal and is now a distributed system: players
 log in from their own client and sit at shared tables, a table survives the failure of the node that plays it.
 
-The rules of the game are strict: dealer standing at 17, blackjack paying 3:2, insurance, double down and split.
-
 ## Architecture
 - **Lobby**: registration and login (session tokens), the balance of every player (deposit and withdrawal) and the
   table to sit at. It knows which tables are up from their heartbeats and starts a new table when all are full.
@@ -17,7 +15,6 @@ The rules of the game are strict: dealer standing at 17, blackjack paying 3:2, i
 - **Database** (PostgreSQL): the users and their balances.
 - **Client**: the terminal game. It finds its table again by itself after a failure.
 
-The choices behind it, and the alternatives discarded, are in the [decision record](DECISION_RECORD.md).
 
 ## Playing online
 The only requirement is Docker. Start the server, then run the client, downloadable from the
@@ -26,6 +23,8 @@ The only requirement is Docker. Start the server, then run the client, downloada
 docker compose up --build
 java -jar scalajack-client.jar
 ```
+On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards.
+
 By default the tables announce `localhost` to the clients, so everyone must play on the machine that runs Docker.
 To play from other computers on the same network:
 1. on the machine that runs Docker, set `PUBLIC_HOST` in `.env` to its IP address on the network (on Windows
@@ -37,9 +36,9 @@ java -jar scalajack-client.jar http://<server-ip>:9080
 On the machine that runs Docker the client also works without arguments, as in a local run.
 The ports 9080, 9091-9093 and 9191-9193 of the server machine must be reachable.
 
-The client asks to register or log in, then shows the lobby: deposit some fiches (a new account has none, and a table
-needs at least the minimum bet of 5), sit at a table and play. Every decision has 30 seconds, a player who does not
-answer follows a default behavior (ask until 12 then stand). On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards.
+The client asks to register or log in, then shows the lobby: a player can either deposit some fiches (a new account has none, and a table
+needs at least the minimum bet of 5), withdraw some fiches or sit at a table and play. Once the player is seated at the table, he has 30 seconds for every decision: if he does not
+answer the client follows a default behavior (ask until 12 then stand).
 
 ### More tables
 To play, `docker compose up --build` is all it takes: it starts one table, `table-1` with its backup, which seats 7
