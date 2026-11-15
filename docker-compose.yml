@@ -12,7 +12,7 @@ x-node-environment: &node-environment
   DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-scalajack}?connectTimeout=5&socketTimeout=10
   DB_USER: ${POSTGRES_USER:-scalajack}
   DB_PASSWORD: ${POSTGRES_PASSWORD:-scalajack-local-password}
-  # default only for local runs: a real deployment must sets its own "SESSION_SECRET" in the .env file
+  # default only for local runs: a real deployment must set its own "SESSION_SECRET" in the .env file
   SESSION_SECRET: ${SESSION_SECRET:-scalajack-local-development-secret-not-for-production}
 
 x-table-environment: &table-environment
@@ -44,9 +44,8 @@ x-table-depends: &table-depends
   lobby:
     condition: service_healthy
 
-# The lobby starts more tables when all are full, but "docker compose up" starts only
-# "table-1", "table-2" and "table-3" belong to the profile "pool", they must
-# exist, for the lobby to start them (use this command to do so)
+# The lobby starts more tables when all are full. "docker compose up" starts only "table-1": "table-2" and
+# "table-3" belong to the profile "pool" and must already exist for the lobby to start them:
 #   docker compose --profile pool up --no-start
 
 services:
