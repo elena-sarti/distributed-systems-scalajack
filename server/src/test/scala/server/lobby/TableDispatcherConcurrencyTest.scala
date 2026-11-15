@@ -14,7 +14,7 @@ import java.util.concurrent.{Callable, ConcurrentLinkedQueue, CyclicBarrier, Exe
  * times only to make a wrong code likely to be caught (a race may show up one time in a hundred). */
 class TableDispatcherConcurrencyTest extends AnyFunSuite:
 
-  /** Rounds of the main tests: at least 100, as the backlog asks. */
+  /** Rounds of the main tests: at least 100. */
   private val Repetitions = 200
 
   /** A provisioner for the tests where no node must be started: if the dispatcher calls it, the test fails. */

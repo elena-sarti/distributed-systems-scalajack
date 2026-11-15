@@ -6,7 +6,7 @@ import server.{PromotionAnswer, PromotionGateway}
 /** What a backup does when it stops hearing its primary. At every tick it asks the lobby for the promotion until the
  * lobby agrees, then it takes the place of the primary and does nothing more.
  *
- * @param takeOver starts the table in place of the primary, from the last state received (`None` if there is none) and
+ * @param takeOver starts the table in place of the primary, from the last state received (None if there is none) and
  *                  with the new epoch.
  */
 final class BackupPromoter(tableId: String, replica: BackupReplica, peers: FailureDetector[Peer],
