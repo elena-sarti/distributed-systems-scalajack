@@ -17,13 +17,12 @@ log in from their own client and sit at shared tables, a table survives the fail
 
 
 ## Playing online
-The only requirement is Docker. Start the server, then run the client, downloadable from the
+The only requirement is Docker. Start the server, then run the client on a UTF-8 terminal (Linux, macOS, or **WSL2** on Windows), downloadable from the
 [latest release](../../releases) (it needs Java 17 or later):
 ```bash
 docker compose up --build
 java -jar scalajack-client.jar
 ```
-On Windows, run `chcp 65001` first, so that the terminal shows the suits of the cards.
 
 By default the tables announce `localhost` to the clients, so everyone must play on the machine that runs Docker.
 To play from other computers on the same network:
