@@ -117,7 +117,7 @@ object Main:
     config.role match
       case NodeRole.Table  => lobby ++ config.backupUrl.map(_ => Peer.Backup)
       case NodeRole.Backup => Peer.Primary +: lobby
-      case NodeRole.Lobby  => Seq.empty // it watches by table id: see `silenceMonitor`
+      case NodeRole.Lobby  => Seq.empty
 
   /** The lobby gateway that tells the detector about every answer of the lobby. */
   private def observed(lobbyUrl: String, peers: FailureDetector[Peer], epoch: () => Option[Long] = () => None): LobbyGateway =
