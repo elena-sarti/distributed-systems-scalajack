@@ -1,33 +1,38 @@
 # ScalaJack
 
 ## Description
-ScalaJack is the game of **Blackjack** played online from the command line, written in Scala 3 with the scores
+ScalaJack is the game of **Blackjack** played online from the command line, written in Scala 3 with scores
 computed by a Prolog theory. It started as a local game for one terminal and is now a distributed system: players
-log in from their own client and sit at shared tables, a table survives the failure of the node that plays it.
-
-## Architecture
-- **Lobby**: registration and login (session tokens), the balance of every player (deposit and withdrawal) and the
-  table to sit at. It knows which tables are up from their heartbeats and starts a new table when all are full.
-- **Tables**: each table is played by a **primary** node, which talks to the clients over WebSocket and copied by a
-  **backup** node. Every move is stored on the backup before the players see it: if the primary fails, the backup takes
-  its place and the hand goes on from where it was. The table prefers consistency to availability (CP): when a move
-  cannot be copied, the table pauses rather than risk two diverging hands.
-- **Database** (PostgreSQL): the users and their balances.
-- **Client**: the terminal game. It finds its table again by itself after a failure.
-
+log in from their own client and sit at shared tables.
 
 ## Playing online
-The only requirement is Docker. Start the server, then run the client on a UTF-8 terminal (Linux, macOS, or **WSL2** on Windows), downloadable from the
-[latest release](../../releases) (it needs Java 17 or later):
+The only requirements are Docker and Java 17 (or later).
+Start the server, then run the client on a UTF-8 terminal (Linux, macOS or **WSL2** on Windows). The client is downloadable from the
+[latest release](../../releases):
 ```bash
 docker compose up --build
 java -jar scalajack-client.jar
 ```
+The client asks to register or log in, then shows the lobby: a player can either deposit some fiches (a new account has none, and a table
+needs at least the minimum bet of 5), withdraw some fiches or sit at a table and play. Once the player is seated at the table, he has 30 seconds for every decision: if he does not
+answer the client follows a default behavior, depending on which is the situation. 
 
+### Running from the prebuilt image
+The [latest release](../../releases) contains everything needed to play without cloning the repository:
+`scalajack-backend.tar.gz` (the Docker image of the server), `docker-compose.yml` and `scalajack-client.jar`.
+Put the three files in the same folder, then:
+```bash
+docker load < scalajack-backend.tar.gz
+docker compose up
+java -jar scalajack-client.jar
+```
+Do not add `--build`: the image is already loaded and Compose uses it as it is.
+
+### Playing from different machines
 By default the tables announce `localhost` to the clients, so everyone must play on the machine that runs Docker.
 To play from other computers on the same network:
-1. on the machine that runs Docker, set `PUBLIC_HOST` in `.env` to its IP address on the network (on Windows
-   `ipconfig` shows it as IPv4 Address) and start the server with `docker compose up --build`.
+1. on the machine that runs Docker, create a `.env` file next to `docker-compose.yml` and set `PUBLIC_HOST` in it to its IP address on the network (on Windows
+   `ipconfig` shows it as IPv4 Address) and start the server;
 2. run the client with the address of the lobby (it can also be set with the environment variable `SCALAJACK_LOBBY`):
 ```bash
 java -jar scalajack-client.jar http://<server-ip>:9080
@@ -35,16 +40,9 @@ java -jar scalajack-client.jar http://<server-ip>:9080
 On the machine that runs Docker the client also works without arguments, as in a local run.
 The ports 9080, 9091-9093 and 9191-9193 of the server machine must be reachable.
 
-The client asks to register or log in, then shows the lobby: a player can either deposit some fiches (a new account has none, and a table
-needs at least the minimum bet of 5), withdraw some fiches or sit at a table and play. Once the player is seated at the table, he has 30 seconds for every decision: if he does not
-answer the client follows a default behavior (ask until 12 then stand).
-
 ### More tables
-To play, `docker compose up --build` is all it takes: it starts one table, `table-1` with its backup, which seats 7
-players. When it is full the lobby starts `table-2`, then `table-3`, each with its backup. This step is optional, only
-to see more tables: the lobby can only start containers that already exist, and Compose does not create these ones
-with `up` (they belong to the profile `pool`, so they do not run from the start). Create them once from the
-root of the repository after the image has been built:
+This step is optional, only
+to see more tables: the lobby can only start containers that already exist, and `docker compose up` creates only the container of `table-1` and of its backup. When `table-1` is full, the lobby starts `table-2`, then `table-3`, each with its backup. Create the containers for `table-2` and `table-3` once, from the folder containing `docker-compose.yml`, after the image has been built or loaded:
 ```bash
 docker compose --profile pool up --no-start
 ```
@@ -57,6 +55,7 @@ and how long a promoted node waits for the players of the failed primary (`RETUR
 database password after the first start needs a new database: `docker compose down -v`.
 
 ## Tests
+These commands need the source code and sbt, so they must be run from a clone of the repository.
 ```bash
 sbt test                          # unit and integration tests, no Docker needed
 sbt "demo/runMain demo.EndToEnd"  # end-to-end, on the Docker deployment started from zero
@@ -66,7 +65,7 @@ registration, login, deposit and withdrawal, a whole hand checked against the ru
 forged tokens.
 
 ## Failure demo
-The failures described in the decision record can be played on the Docker deployment:
+Possible failure scenarios, such as the crash of the primary node that runs a table, a network partition or a crash of the backup can be played on the Docker deployment:
 ```bash
 docker compose build
 sbt "demo/run"           # every scenario
@@ -78,7 +77,7 @@ prints what it observes.
 ## Modules
 - `model`: the rules of the game, from the non-distributed version.
 - `protocol`: the messages between clients and nodes, as JSON.
-- `server`: lobby, table and backup nodes (one jar, the role is chosen by `NODE_ROLE`).
+- `server`: the lobby, the database, table nodes and their backup.
 - `client`: the terminal client, and the local game of the non-distributed version (`sbt "client/runMain controller.GameController"`).
 - `demo`: the failure demo and the end-to-end tests.
 
