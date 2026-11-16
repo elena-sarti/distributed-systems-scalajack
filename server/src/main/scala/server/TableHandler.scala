@@ -125,15 +125,14 @@ final class TableHandler(cashier: Cashier = Cashier.withoutMemory(TableHandler.D
     case Phase.Turn(current)                 =>
       keepUntilEndOfHand(seat)
       if belongsTo(current, seat) then playForAbsent(current) // it was their turn: the table finishes the hand now
-    // otherwise the table plays their hands when their turn comes (see startTurn)
+    // otherwise the table plays their hands when their turn comes
     case _                                   => leave(seat) // betting, or no hand at all
 
   /** Keeps the seat, but nothing is sent to it and its hands are played automatically. */
   private def keepUntilEndOfHand(seat: Seat): Unit =
     seats = seats.updated(seat.connection.id, seat.copy(connected = false))
 
-  /** Decides for who is late when the wait for a decision has run out, so a silent client never blocks the others (see
-   * [[playForAbsent]]). */
+  /** Decides for who is late when the wait for a decision has run out, so a silent client never blocks the others. */
   override def onTick(): Unit =
     returnDeadline.filter(limit => !clock().isBefore(limit)).foreach(_ => giveUpWaiting())
     if deadline.exists(limit => !clock().isBefore(limit)) then decisionTimedOut()

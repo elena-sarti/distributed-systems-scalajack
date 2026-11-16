@@ -5,11 +5,11 @@ import utils.ModelExports.Game
 
 /** Why a registration was refused. */
 enum RegistrationError:
-  /** The username breaks the rules (see [[RegistrationService.isUsernameValid]]). */
+  /** The username breaks the rules. */
   case InvalidUsername
-  /** The password is too short or too long (see [[RegistrationService.isPasswordValid]]). */
+  /** The password is too short or too long. */
   case InvalidPassword
-  /** Somebody already registered this username (ignoring the case). */
+  /** Somebody already registered this username. */
   case UsernameTaken
 
 /** Registers new users. It checks username and password and stores the user with the *hash* of the password, which is the
@@ -25,9 +25,9 @@ final class RegistrationService(users: UserRepository, hasher: PasswordHasher):
       case CreateUserError.UsernameTaken => RegistrationError.UsernameTaken
 
 object RegistrationService:
-  /** The size of the `username` column (see `db/schema.sql`). */
+  /** The size of the `username` column. */
   val MaxUsernameLength = 32
-  /** At least 8 characters, as recommended by NIST SP 800-63B. */
+  /** At least 8 characters. */
   val MinPasswordLength = 8
   /** An upper limit, so that a huge input cannot keep the hasher busy. */
   val MaxPasswordLength = 128

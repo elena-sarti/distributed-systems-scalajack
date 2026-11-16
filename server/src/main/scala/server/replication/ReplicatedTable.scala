@@ -42,13 +42,13 @@ final class ReplicatedTable(cashier: Cashier, replicator: Replicator, epoch: Lon
   /** Whether the table is playing without a backup (degraded mode). */
   def isAlone: Boolean = alone
 
-  /** The lobby has agreed that the table goes on without its backup, with `newEpoch` (see [[BackupExcluder]]).
+  /** The lobby has agreed that the table goes on without its backup, with newEpoch.
    * From the next event on nothing waits for the backup. */
   def goOnAlone(newEpoch: Long): Unit =
     epochNow = newEpoch // before the flag: whoever sees the table alone also sees its new epoch
     alone = true
 
-  /** The backup answers again (see [[BackupExcluder]]). Before the next event the table sends it its whole state. If the
+  /** The backup answers again. Before the next event the table sends it its whole state. If the
    * backup stores it every move waits for it again, otherwise the table stays alone. */
   def takeBackupBack(): Unit = backupIsBack = true
 

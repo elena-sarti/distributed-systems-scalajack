@@ -21,7 +21,7 @@ final class BackupPromoter(tableId: String, replica: BackupReplica, peers: Failu
 
   private def attempt(): Unit =
     val latest = replica.latest
-    // greater than the epoch of the primary that failed: whatever it still sends is refused (see `BackupReplica`)
+    // greater than the epoch of the primary that failed: whatever it still sends is refused
     val epoch  = latest.map(_.epoch).getOrElse(0L) + 1
     val answer = lobby.requestPromotion(tableId, epoch)
     if !lastAnswer.contains(answer) then

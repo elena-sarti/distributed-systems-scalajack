@@ -7,8 +7,7 @@ package server
  * @param host         the address the clients use to reach the table.
  * @param wsPort       the WebSocket port the clients use.
  * @param seats        where the number of free seats is read at each heartbeat.
- * @param onSuperseded called when the lobby says that another node plays this table now (see
- *                     [[HeartbeatResult.Superseded]]), so this one must step down.
+ * @param onSuperseded called when the lobby says that another node plays this table now, so this one must step down.
  */
 final class TableAnnouncer(gateway: LobbyGateway, id: String, host: String, wsPort: Int, seats: SeatAvailability,
                            onSuperseded: () => Unit = () => ()):

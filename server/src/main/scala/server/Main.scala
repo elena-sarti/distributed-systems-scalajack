@@ -53,9 +53,9 @@ object Main:
         val endpoint = table.map(TableEndpoint(config.wsPort, _, tokens))
         val replicated = logic.collect { case primary: ReplicatedTable => primary }
         // a primary that has been replaced refuses every move and closes the connections: the clients go back to
-        // the lobby, which sends them to the node that plays the table now
+        // the lobby that sends them to the node that plays the table now
         val stepDown = stepDownOnce(replicated, endpoint)
-        // ...and it tells the lobby that it exists and how many seats are free (if it knows where the lobby is)
+        // the announcer tells the lobby that this table exists and how many seats are free (only if the lobby url is configured)
         val announcer = for seats <- logic; url <- config.lobbyUrl yield
           heartbeatSender(config, observed(url, peers, () => replicated.map(_.currentEpoch)), seats, stepDown)
         // a primary that cannot reach its backup asks the lobby to go on without it
